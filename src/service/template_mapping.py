@@ -3,8 +3,8 @@ from typing import List, Optional
 
 import pandas as pd
 
-from src.core.constants import VAT
-from src.core.template import (
+from src.constant.required import VAT
+from src.constant.template import (
     column_add_attribute_marketing,
     column_ag,
     column_attr,
