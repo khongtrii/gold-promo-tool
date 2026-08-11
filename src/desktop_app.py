@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import traceback
 import re
+import os
+import subprocess
+import sys
 from copy import copy
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +24,7 @@ import xlwt
 
 from src.service.template_mapping import Discount, SalePrice, Template_Mapping
 from src.service.template_service import Template_ETL
+from src._version import __version__
 
 
 TEMPLATE_EXPORTS = (
@@ -414,6 +418,15 @@ class GoldPromoApp:
         self.root.title("Gold Promo Template Generator")
         self.root.minsize(760, 510)
 
+        version_style = ttk.Style(root)
+        version_style.configure("Version.TLabel", foreground="#888888")
+        self.version_label = ttk.Label(
+            root,
+            text=f"v{__version__}v",
+            style="Version.TLabel",
+        )
+        self.version_label.place(relx=1.0, x=-10, y=5, anchor="ne")
+
         self.stage1_source = StringVar()
         self.stage1_master_data = StringVar(
             value=str(Path.cwd() / "data" / "reference" / "master-data-file.xlsm")
@@ -438,6 +451,7 @@ class GoldPromoApp:
 
         self._build_stage1()
         self._build_stage2()
+        self.version_label.lift()
 
     @staticmethod
     def _choose_file(variable: StringVar, filetypes: list[tuple[str, str]]) -> None:
@@ -878,9 +892,40 @@ class GoldPromoApp:
             self.stage2_status.config(text="Stage 2 did not create an output. Review the error messages.")
 
 
+def launch_updater() -> None:
+    """Start the separate updater process once for every app launch."""
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if getattr(sys, "frozen", False):
+        app_path = Path(sys.executable).resolve()
+        updater_path = app_path.with_name("gold-promo-updater.exe")
+        if not updater_path.is_file():
+            messagebox.showwarning("Updater không tồn tại", f"Không tìm thấy file updater:\n{updater_path}")
+            return
+        command = [str(updater_path)]
+    else:
+        app_path = Path(sys.argv[0]).resolve()
+        command = [sys.executable, "-m", "src.updater", "--check-only"]
+
+    command.extend(
+        [
+            "--app-path",
+            str(app_path),
+            "--app-pid",
+            str(os.getpid()),
+            "--current-version",
+            __version__,
+        ]
+    )
+    try:
+        subprocess.Popen(command, cwd=str(app_path.parent), creationflags=creationflags)
+    except OSError as error:
+        messagebox.showerror("Không thể mở updater", str(error))
+
+
 def main() -> None:
     root = Tk()
     GoldPromoApp(root)
+    root.after(500, launch_updater)
     root.mainloop()
 
 

@@ -217,4 +217,5 @@ service-account.json
 **/output/
 **/upload/
 
+**/_version.py
 ```
