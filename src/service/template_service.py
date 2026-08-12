@@ -851,86 +851,183 @@ class Template_ETL:
             new_codes.add(selected)
         return sorted(duplicate_codes, key=self._sort_key)
 
+    # def update_sitegroup_file(self, suggestions: list[dict]) -> bool:
+    #     """Apply confirmed Site Group additions/removals to the master sheet."""
+    #     duplicate_codes = self.validate_sitegroup_changes(suggestions)
+    #     if duplicate_codes:
+    #         raise ValueError("Duplicate Site Group: " + "; ".join(duplicate_codes))
+
+    #     delete_codes: set[str] = set()
+    #     new_rows: list[tuple[str, str]] = []
+    #     replacement_rows: dict[str, tuple[str, ...]] = {}
+    #     for suggestion in suggestions:
+    #         original = str(suggestion.get("original_suggested_code", "")).strip()
+    #         selected = str(suggestion.get("suggested_code", "")).strip()
+    #         if selected == original:
+    #             if original:
+    #                 target_sites = self._unique_sorted_sites(suggestion["expanded_network"])
+    #                 if set(self.sitegroup_members.get(original, ())) != set(target_sites):
+    #                     replacement_rows[original] = target_sites
+    #             continue
+    #         if original:
+    #             delete_codes.add(original)
+    #         if selected:
+    #             new_rows.append((selected, str(suggestion["expanded_network"]).strip()))
+
+    #     if not delete_codes and not new_rows and not replacement_rows:
+    #         return False
+
+    #     keep_vba = self.path_sitegroup.suffix.lower() == ".xlsm"
+    #     workbook = load_workbook(self.path_sitegroup, keep_vba=keep_vba)
+    #     temporary_path = None
+    #     try:
+    #         sheet = workbook["site-group"]
+    #         headers = {
+    #             str(sheet.cell(1, column).value).strip(): column
+    #             for column in range(1, sheet.max_column + 1)
+    #         }
+    #         code_column = headers.get("SITE_GROUP")
+    #         site_column = headers.get("SITE")
+    #         if code_column is None or site_column is None:
+    #             raise ValueError("Sheet site-group must contain SITE_GROUP and SITE columns.")
+
+    #         for row in range(sheet.max_row, 1, -1):
+    #             value = sheet.cell(row, code_column).value
+    #             if value is not None and str(value).strip() in (delete_codes | set(replacement_rows)):
+    #                 sheet.delete_rows(row, 1)
+
+    #         rows_to_add = [
+    #             *replacement_rows.items(),
+    #             *((code, self._unique_sorted_sites(sites)) for code, sites in new_rows),
+    #         ]
+    #         for code, sites in rows_to_add:
+    #             for site in sites:
+    #                 sheet.append([
+    #                     code if column == code_column else site if column == site_column else None
+    #                     for column in range(1, sheet.max_column + 1)
+    #                 ])
+
+    #         with tempfile.NamedTemporaryFile(
+    #             suffix=self.path_sitegroup.suffix,
+    #             dir=self.path_sitegroup.parent,
+    #             delete=False,
+    #         ) as temporary_file:
+    #             temporary_path = Path(temporary_file.name)
+    #         workbook.save(temporary_path)
+    #         workbook.close()
+    #         os.replace(temporary_path, self.path_sitegroup)
+    #     except Exception:
+    #         workbook.close()
+    #         if temporary_path is not None and temporary_path.exists():
+    #             temporary_path.unlink()
+    #         raise
+
+    #     self.master_sitegroup_codes.difference_update(delete_codes)
+    #     self.master_sitegroup_codes.update(code for code, _ in new_rows)
+    #     for code in delete_codes:
+    #         self.sitegroup_members.pop(code, None)
+    #     self.sitegroup_members.update(replacement_rows)
+    #     self.sitegroup_members.update(
+    #         {code: self._unique_sorted_sites(sites) for code, sites in new_rows}
+    #     )
+    #     return True
+
     def update_sitegroup_file(self, suggestions: list[dict]) -> bool:
-        """Apply confirmed Site Group additions/removals to the master sheet."""
-        duplicate_codes = self.validate_sitegroup_changes(suggestions)
-        if duplicate_codes:
-            raise ValueError("Duplicate Site Group: " + "; ".join(duplicate_codes))
+            """Apply confirmed Site Group additions/removals to the master sheet."""
+            duplicate_codes = self.validate_sitegroup_changes(suggestions)
+            if duplicate_codes:
+                raise ValueError("Duplicate Site Group: " + "; ".join(duplicate_codes))
 
-        delete_codes: set[str] = set()
-        new_rows: list[tuple[str, str]] = []
-        replacement_rows: dict[str, tuple[str, ...]] = {}
-        for suggestion in suggestions:
-            original = str(suggestion.get("original_suggested_code", "")).strip()
-            selected = str(suggestion.get("suggested_code", "")).strip()
-            if selected == original:
+            delete_codes: set[str] = set()
+            new_rows: list[tuple[str, list[str]]] = []
+            replacement_rows: dict[str, list[str]] = {}
+            for suggestion in suggestions:
+                original = str(suggestion.get("original_suggested_code", "")).strip()
+                selected = str(suggestion.get("suggested_code", "")).strip()
+                if selected == original:
+                    if original:
+                        target_sites = self._unique_sorted_sites(suggestion["expanded_network"])
+                        if set(self.sitegroup_members.get(original, ())) != set(target_sites):
+                            replacement_rows[original] = target_sites
+                    continue
                 if original:
-                    target_sites = self._unique_sorted_sites(suggestion["expanded_network"])
-                    if set(self.sitegroup_members.get(original, ())) != set(target_sites):
-                        replacement_rows[original] = target_sites
-                continue
-            if original:
-                delete_codes.add(original)
-            if selected:
-                new_rows.append((selected, str(suggestion["expanded_network"]).strip()))
+                    delete_codes.add(original)
+                if selected:
+                    # Chuẩn hóa về list[str] ngay tại đây, tránh gọi lại _unique_sorted_sites
+                    # trên một string (dễ bug: iterate theo ký tự) ở bước sau.
+                    new_rows.append((selected, self._unique_sorted_sites(suggestion["expanded_network"])))
 
-        if not delete_codes and not new_rows and not replacement_rows:
-            return False
+            codes_to_delete = delete_codes | set(replacement_rows)
+            if not codes_to_delete and not new_rows and not replacement_rows:
+                return False
 
-        keep_vba = self.path_sitegroup.suffix.lower() == ".xlsm"
-        workbook = load_workbook(self.path_sitegroup, keep_vba=keep_vba)
-        temporary_path = None
-        try:
-            sheet = workbook["site-group"]
-            headers = {
-                str(sheet.cell(1, column).value).strip(): column
-                for column in range(1, sheet.max_column + 1)
-            }
-            code_column = headers.get("SITE_GROUP")
-            site_column = headers.get("SITE")
-            if code_column is None or site_column is None:
-                raise ValueError("Sheet site-group must contain SITE_GROUP and SITE columns.")
+            keep_vba = self.path_sitegroup.suffix.lower() == ".xlsm"
+            workbook = load_workbook(self.path_sitegroup, keep_vba=keep_vba)
+            temporary_path = None
+            try:
+                sheet = workbook["site-group"]
+                headers = {
+                    str(sheet.cell(1, column).value).strip(): column
+                    for column in range(1, sheet.max_column + 1)
+                }
+                code_column = headers.get("SITE_GROUP")
+                site_column = headers.get("SITE")
+                if code_column is None or site_column is None:
+                    raise ValueError("Sheet site-group must contain SITE_GROUP and SITE columns.")
 
-            for row in range(sheet.max_row, 1, -1):
-                value = sheet.cell(row, code_column).value
-                if value is not None and str(value).strip() in (delete_codes | set(replacement_rows)):
-                    sheet.delete_rows(row, 1)
+                max_row = sheet.max_row
+                max_col = sheet.max_column
 
-            rows_to_add = [
-                *replacement_rows.items(),
-                *((code, self._unique_sorted_sites(sites)) for code, sites in new_rows),
-            ]
-            for code, sites in rows_to_add:
-                for site in sites:
-                    sheet.append([
-                        code if column == code_column else site if column == site_column else None
-                        for column in range(1, sheet.max_column + 1)
-                    ])
+                # Đọc toàn bộ dữ liệu 1 lần (nhanh hơn nhiều so với .cell() từng ô),
+                # lọc bỏ các dòng cần xóa trong bộ nhớ.
+                kept_rows: list[tuple] = []
+                if max_row > 1:
+                    for row in sheet.iter_rows(min_row=2, max_row=max_row, values_only=True):
+                        code_val = row[code_column - 1]
+                        if code_val is None or str(code_val).strip() not in codes_to_delete:
+                            kept_rows.append(row)
 
-            with tempfile.NamedTemporaryFile(
-                suffix=self.path_sitegroup.suffix,
-                dir=self.path_sitegroup.parent,
-                delete=False,
-            ) as temporary_file:
-                temporary_path = Path(temporary_file.name)
-            workbook.save(temporary_path)
-            workbook.close()
-            os.replace(temporary_path, self.path_sitegroup)
-        except Exception:
-            workbook.close()
-            if temporary_path is not None and temporary_path.exists():
-                temporary_path.unlink()
-            raise
+                    # Xóa toàn bộ vùng dữ liệu (row 2..max_row) trong MỘT lần gọi,
+                    # thay vì delete_rows từng dòng riêng lẻ.
+                    sheet.delete_rows(2, max_row - 1)
 
-        self.master_sitegroup_codes.difference_update(delete_codes)
-        self.master_sitegroup_codes.update(code for code, _ in new_rows)
-        for code in delete_codes:
-            self.sitegroup_members.pop(code, None)
-        self.sitegroup_members.update(replacement_rows)
-        self.sitegroup_members.update(
-            {code: self._unique_sorted_sites(sites) for code, sites in new_rows}
-        )
-        return True
+                # Ghi lại các dòng giữ nguyên
+                for row in kept_rows:
+                    sheet.append(list(row))
+
+                # Ghi các dòng mới/thay thế, dùng template list dựng sẵn thay vì
+                # list comprehension quét toàn bộ số cột cho mỗi site.
+                rows_to_add = [*replacement_rows.items(), *new_rows]
+                template = [None] * max_col
+                for code, sites in rows_to_add:
+                    for site in sites:
+                        new_row = template.copy()
+                        new_row[code_column - 1] = code
+                        new_row[site_column - 1] = site
+                        sheet.append(new_row)
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=self.path_sitegroup.suffix,
+                    dir=self.path_sitegroup.parent,
+                    delete=False,
+                ) as temporary_file:
+                    temporary_path = Path(temporary_file.name)
+                workbook.save(temporary_path)
+                workbook.close()
+                os.replace(temporary_path, self.path_sitegroup)
+            except Exception:
+                workbook.close()
+                if temporary_path is not None and temporary_path.exists():
+                    temporary_path.unlink()
+                raise
+
+            self.master_sitegroup_codes.difference_update(delete_codes)
+            self.master_sitegroup_codes.update(code for code, _ in new_rows)
+            for code in delete_codes:
+                self.sitegroup_members.pop(code, None)
+            self.sitegroup_members.update(replacement_rows)
+            self.sitegroup_members.update(dict(new_rows))
+            return True
 
     def apply_sitegroup_suggestions(self, suggestions: list[dict]) -> list[dict]:
         """Apply Site Group codes confirmed or entered by the user."""
