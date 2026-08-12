@@ -28,7 +28,6 @@ from src._version import __version__
 
 
 TEMPLATE_EXPORTS = (
-    ("check_oa", "template_check_oa"),
     ("promotion_plan", "template_promotion_plan"),
     ("update_so", "template_update_so"),
     ("missing_ou", "template_missing_ou"),
@@ -433,7 +432,7 @@ class GoldPromoApp:
         )
         self.stage1_output = StringVar(value=str(Path.cwd() / "output"))
         self.username = StringVar(value="user")
-        self.excluded_sitegroup_input = StringVar()
+        self.non_suggested_sitegroup_input = StringVar()
         self.report_ag = StringVar()
 
         self.stage2_source = StringVar()
@@ -509,19 +508,22 @@ class GoldPromoApp:
         ttk.Label(frame, text="Username in AG description").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=5)
         ttk.Entry(frame, textvariable=self.username, width=30).grid(row=3, column=1, sticky="w", pady=5)
 
-        excluded_frame = ttk.LabelFrame(frame, text="Excluded SITE GROUP codes", padding=8)
+        excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes not used for suggestions", padding=8)
         excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
         excluded_frame.columnconfigure(0, weight=1)
-        ttk.Entry(excluded_frame, textvariable=self.excluded_sitegroup_input, width=30).grid(
+        ttk.Entry(excluded_frame, textvariable=self.non_suggested_sitegroup_input, width=30).grid(
             row=0, column=0, sticky="ew", padx=(0, 6)
         )
-        ttk.Button(excluded_frame, text="+", width=3, command=self.add_excluded_sitegroup).grid(row=0, column=1)
-        ttk.Button(excluded_frame, text="−", width=3, command=self.remove_excluded_sitegroup).grid(row=0, column=2, padx=(6, 0))
-        self.excluded_sitegroup_list = Listbox(excluded_frame, height=4, selectmode="extended")
-        self.excluded_sitegroup_list.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        ttk.Button(excluded_frame, text="+", width=3, command=self.add_non_suggested_sitegroup).grid(row=0, column=1)
+        ttk.Button(excluded_frame, text="−", width=3, command=self.remove_non_suggested_sitegroup).grid(row=0, column=2, padx=(6, 0))
+        self.non_suggested_sitegroup_list = Listbox(excluded_frame, height=4, selectmode="extended")
+        self.non_suggested_sitegroup_list.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
         ttk.Separator(frame).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Button(frame, text="Run Pipeline", command=self.run_stage1).grid(row=6, column=1, sticky="w")
+        ttk.Button(frame, text="Run Pipeline", command=self.run_stage1).grid(row=6, column=0, sticky="w")
+        self.check_oa_button = ttk.Button(frame, text="Create Check OA File", command=self.create_check_oa)
+        self.check_oa_button.grid(row=6, column=1, sticky="w", padx=(8, 0))
+        self.check_oa_button.state(["disabled"])
         self.template_mapping_button = ttk.Button(
             frame, text="Create Template Mapping", command=self.create_template_mapping
         )
@@ -538,28 +540,45 @@ class GoldPromoApp:
         self.export_src_button.grid(row=9, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.export_src_button.state(["disabled"])
 
-    def add_excluded_sitegroup(self) -> None:
+    def add_non_suggested_sitegroup(self) -> None:
         codes = [
             code.strip()
-            for code in re.split(r"[;,]", self.excluded_sitegroup_input.get())
+            for code in re.split(r"[;,]", self.non_suggested_sitegroup_input.get())
             if code.strip()
         ]
         if not codes:
             return
-        existing_codes = set(self.excluded_sitegroup_list.get(0, "end"))
+        existing_codes = set(self.non_suggested_sitegroup_list.get(0, "end"))
         for code in codes:
             if code not in existing_codes:
-                self.excluded_sitegroup_list.insert("end", code)
+                self.non_suggested_sitegroup_list.insert("end", code)
                 existing_codes.add(code)
-        self.excluded_sitegroup_input.set("")
+        self.non_suggested_sitegroup_input.set("")
 
-    def remove_excluded_sitegroup(self) -> None:
-        selected = list(self.excluded_sitegroup_list.curselection())
+    def remove_non_suggested_sitegroup(self) -> None:
+        selected = list(self.non_suggested_sitegroup_list.curselection())
         for index in reversed(selected):
-            self.excluded_sitegroup_list.delete(index)
+            self.non_suggested_sitegroup_list.delete(index)
 
-    def _excluded_sitegroup_codes(self) -> list[str]:
-        return list(self.excluded_sitegroup_list.get(0, "end"))
+    def _non_suggested_sitegroup_codes(self) -> list[str]:
+        return list(self.non_suggested_sitegroup_list.get(0, "end"))
+
+    def _record_used_sitegroups(self, etl: Template_ETL) -> None:
+        """Add this run's Site Groups to the user-maintained reservation list."""
+        if etl.src is None:
+            return
+        existing_codes = set(self.non_suggested_sitegroup_list.get(0, "end"))
+        used_codes = sorted(
+            {
+                str(code).strip()
+                for code in etl.src["SITE GROUP"].fillna("")
+                if str(code).strip()
+            }
+        )
+        for code in used_codes:
+            if code not in existing_codes:
+                self.non_suggested_sitegroup_list.insert("end", code)
+                existing_codes.add(code)
 
     def _choose_attribute_sheet(self, path: Path) -> str | None:
         """Show a modal selector for the worksheet to use as Attribute data."""
@@ -710,6 +729,7 @@ class GoldPromoApp:
             # Do not allow actions to use artifacts from an earlier pipeline run.
             self.pending_etl = None
             self.pending_discount = None
+            self.check_oa_button.state(["disabled"])
             self.template_mapping_button.state(["disabled"])
             self.export_src_button.state(["disabled"])
             self.report_button.state(["disabled"])
@@ -720,7 +740,7 @@ class GoldPromoApp:
                 sources,
                 master_data,
                 master_data,
-                excluded_sitegroup_codes=self._excluded_sitegroup_codes(),
+                non_suggested_sitegroup_codes=self._non_suggested_sitegroup_codes(),
             )
             etl._load_sitegroup()._load_network()._load_src()
             if etl.has_missing_so_or_sitegroup():
@@ -759,18 +779,42 @@ class GoldPromoApp:
         try:
             self._export_non_warehouse(etl, output, timestamp)
             self.pending_etl = etl
+            self._record_used_sitegroups(etl)
+            self.check_oa_button.state(["!disabled"])
             self.template_mapping_button.state(["!disabled"])
             self.export_src_button.state(["!disabled"])
             self.stage1_status.config(
-                text="Pipeline complete. Create template mapping or export the processed src."
+                text="Pipeline complete. Create Check OA, template mapping, or export the processed src."
             )
             messagebox.showinfo(
                 "Pipeline complete",
-                "The processed src is ready for template mapping or export.",
+                "The processed src is ready for Check OA, template mapping, or export.",
             )
         except Exception as error:
             self.stage1_status.config(text="Stage 1 pipeline failed.")
             messagebox.showerror("Stage 1 pipeline failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
+
+    def create_check_oa(self) -> None:
+        """Create the Check OA file from the processed Stage 1 source."""
+        etl = self.pending_etl
+        if etl is None or etl.src is None:
+            messagebox.showerror("Pipeline required", "Run the Stage 1 pipeline first.")
+            return
+        output = self._output_dir(self.stage1_output)
+        if output is None:
+            return
+        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        try:
+            self.stage1_status.config(text="Creating Check OA file from the processed src…")
+            self.root.update_idletasks()
+            mapping = Template_Mapping(etl)._create_check_oa()
+            output_path = self._output_file(output, "template_check_oa", timestamp)
+            WorkbookExporter.write_template(mapping.template_check_oa, output_path)
+            self.stage1_status.config(text=f"Check OA file created: {output_path}")
+            messagebox.showinfo("Check OA complete", f"Created:\n{output_path}")
+        except Exception as error:
+            self.stage1_status.config(text="Check OA creation failed.")
+            messagebox.showerror("Check OA creation failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
     def create_template_mapping(self) -> None:
         """Create templates from the processed ETL source without reloading input."""

@@ -47,6 +47,7 @@ class Template_ETL:
         path_sitegroup=None,
         path_plan=None,
         path_attribute=None,
+        non_suggested_sitegroup_codes=None,
         excluded_sitegroup_codes=None,
     ):
         if path_src is None:
@@ -66,9 +67,16 @@ class Template_ETL:
         self.sitegroup: dict = dict()
         self.sitegroup_members: dict[str, tuple[str, ...]] = dict()
         self.master_sitegroup_codes: set[str] = set()
-        self.excluded_sitegroup_codes = {
+        # These codes remain valid for exact Site Group matching. They are
+        # reserved only from automatic suggestions.
+        reserved_sitegroup_codes = (
+            non_suggested_sitegroup_codes
+            if non_suggested_sitegroup_codes is not None
+            else excluded_sitegroup_codes
+        )
+        self.non_suggested_sitegroup_codes = {
             str(code).strip()
-            for code in (excluded_sitegroup_codes or [])
+            for code in (reserved_sitegroup_codes or [])
             if str(code).strip()
         }
 
@@ -494,7 +502,6 @@ class Template_ETL:
         data["SITE_GROUP"] = data["SITE_GROUP"].astype(str).str.strip()
         data["SITE"] = data["SITE"].apply(self._sort_network)
         self.master_sitegroup_codes = set(data["SITE_GROUP"])
-        data = data.loc[~data["SITE_GROUP"].isin(self.excluded_sitegroup_codes)].copy()
         self.sitegroup_members = {
             code: self._unique_sorted_sites(sites)
             for code, sites in zip(data["SITE_GROUP"], data["SITE"])
@@ -813,6 +820,8 @@ class Template_ETL:
             current_sites = set(self._parse_sites(network))
             candidates = []
             for code, members in self.sitegroup_members.items():
+                if code in self.non_suggested_sitegroup_codes:
+                    continue
                 candidate_sites = set(members)
                 missing = sorted(current_sites - candidate_sites, key=self._sort_key)
                 extra = sorted(candidate_sites - current_sites, key=self._sort_key)
@@ -1125,6 +1134,25 @@ class Template_ETL:
 
         return data
 
+    def _validate_structure_gold_lv(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Flag a GOLD CODE/LV combination assigned to multiple structures."""
+        self._ensure_note_err(data)
+        keys = ["GOLD CODE", "LV"]
+        normalized = data.loc[:, [*keys, "STRUCTURE"]].fillna("").astype(str).apply(
+            lambda column: column.str.strip()
+        )
+        valid_keys = normalized["GOLD CODE"].ne("") & normalized["LV"].ne("")
+
+        for _, index in normalized.loc[valid_keys].groupby(keys, dropna=False).groups.items():
+            structures = set(normalized.loc[index, "STRUCTURE"]) - {""}
+            if len(structures) > 1:
+                self._append_note_err(
+                    data,
+                    pd.Index(index),
+                    "GOLD CODE và LV trùng nhau nhưng STRUCTURE khác nhau.",
+                )
+        return data
+
     def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
         self._append_note_err(
             data,
@@ -1213,6 +1241,7 @@ class Template_ETL:
             data["STRUCTURE"] = source_structure
             data = self._get_sitegroup(data)
             data = self._getSO(data)
+        data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)
         data = self._convert_date(data)
 
@@ -1276,6 +1305,7 @@ class Template_ETL:
         )
         
         self._ensure_note_err(data)
+        data = self._validate_structure_gold_lv(data)
         
         def _convert_date_sp(data: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
             data["SP START DATE"] = pd.to_datetime(

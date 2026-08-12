@@ -215,6 +215,7 @@ class BaseTemplate(ContractMixin, StageMixin):
         self.allocation: dict = dict()
 
         self.template_check_oa: Optional[pd.DataFrame] = None
+        self.template_check_oa_raw: Optional[pd.DataFrame] = None
         self.template_promotion_plan: Optional[pd.DataFrame] = None
         self.template_update_so: Optional[pd.DataFrame] = None
         self.template_missing_ou: Optional[pd.DataFrame] = None
@@ -229,6 +230,7 @@ class CheckOAMixin:
         data = self.src
 
         template_check_oa = {
+            "STRUCTURE" : data['STRUCTURE'],
             column_check_oa[0]: data["GOLD CODE"],
             column_check_oa[1]: data["LV"],
             column_check_oa[2]: data["LU"],
@@ -247,6 +249,8 @@ class CheckOAMixin:
         template_check_oa = template_check_oa.explode("SITE")
 
         template_check_oa["CONTRACT"] = template_check_oa.apply(self.get_contract, axis=1)
+
+        self.template_check_oa_raw = template_check_oa.copy()
 
         template_check_oa = template_check_oa[column_check_oa]
 

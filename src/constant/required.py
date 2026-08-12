@@ -18,7 +18,7 @@ required_stage1: List[str] = [
 ]
 
 required_stage2: List[str] = [
-    'GOLD CODE', 'SV', 'TILLCODE', 'SV DESCRIPTION', 'NORMAL SALE PRICE', 'PROMOTION SALE PRICE', 
+    'GOLD CODE', 'LV', 'SV', 'TILLCODE', 'SV DESCRIPTION', 'NORMAL SALE PRICE', 'PROMOTION SALE PRICE',
     'PRICELIST', 'SALE VAT'
 ]
 
