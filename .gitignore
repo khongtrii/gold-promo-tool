@@ -218,4 +218,8 @@ service-account.json
 **/upload/
 
 **/_version.py
+
+**/applications
+**/application
 ```
+

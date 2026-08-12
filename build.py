@@ -40,7 +40,6 @@ def build() -> None:
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR)
 
-    # Xóa exe cũ
     for exe in (
         APP_DIR / "gold-promo-tool.exe",
         APP_DIR / "gold-promo-updater.exe",

@@ -422,7 +422,7 @@ class GoldPromoApp:
         version_style.configure("Version.TLabel", foreground="#888888")
         self.version_label = ttk.Label(
             root,
-            text=f"v{__version__}v",
+            text=f"v{__version__}",
             style="Version.TLabel",
         )
         self.version_label.place(relx=1.0, x=-10, y=5, anchor="ne")
