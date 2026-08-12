@@ -521,7 +521,12 @@ class GoldPromoApp:
         self.excluded_sitegroup_list.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
         ttk.Separator(frame).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Button(frame, text="Run Stage 1", command=self.run_stage1).grid(row=6, column=1, sticky="w")
+        ttk.Button(frame, text="Run Pipeline", command=self.run_stage1).grid(row=6, column=1, sticky="w")
+        self.template_mapping_button = ttk.Button(
+            frame, text="Create Template Mapping", command=self.create_template_mapping
+        )
+        self.template_mapping_button.grid(row=6, column=2, sticky="w", padx=(8, 0))
+        self.template_mapping_button.state(["disabled"])
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 14))
 
@@ -702,6 +707,13 @@ class GoldPromoApp:
         master_data = paths[0]
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
+            # Do not allow actions to use artifacts from an earlier pipeline run.
+            self.pending_etl = None
+            self.pending_discount = None
+            self.template_mapping_button.state(["disabled"])
+            self.export_src_button.state(["disabled"])
+            self.report_button.state(["disabled"])
+            self.finish_discount_button.state(["disabled"])
             self.stage1_status.config(text="Loading and validating Stage 1…")
             self.root.update_idletasks()
             etl = Template_ETL(
@@ -735,17 +747,44 @@ class GoldPromoApp:
                     self.root,
                     etl,
                     suggestions,
-                    lambda: self._complete_stage1(etl, output, timestamp),
+                    lambda: self._complete_stage1_pipeline(etl, output, timestamp),
                 )
                 return
-            self._complete_stage1(etl, output, timestamp)
+            self._complete_stage1_pipeline(etl, output, timestamp)
         except Exception as error:  # Show useful detail while keeping the GUI alive.
             self.stage1_status.config(text="Stage 1 failed.")
             messagebox.showerror("Stage 1 failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
-    def _complete_stage1(self, etl: Template_ETL, output: Path, timestamp: str) -> None:
+    def _complete_stage1_pipeline(self, etl: Template_ETL, output: Path, timestamp: str) -> None:
         try:
             self._export_non_warehouse(etl, output, timestamp)
+            self.pending_etl = etl
+            self.template_mapping_button.state(["!disabled"])
+            self.export_src_button.state(["!disabled"])
+            self.stage1_status.config(
+                text="Pipeline complete. Create template mapping or export the processed src."
+            )
+            messagebox.showinfo(
+                "Pipeline complete",
+                "The processed src is ready for template mapping or export.",
+            )
+        except Exception as error:
+            self.stage1_status.config(text="Stage 1 pipeline failed.")
+            messagebox.showerror("Stage 1 pipeline failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
+
+    def create_template_mapping(self) -> None:
+        """Create templates from the processed ETL source without reloading input."""
+        etl = self.pending_etl
+        if etl is None or etl.src is None:
+            messagebox.showerror("Pipeline required", "Run the Stage 1 pipeline first.")
+            return
+        output = self._output_dir(self.stage1_output)
+        if output is None:
+            return
+        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        try:
+            self.stage1_status.config(text="Creating template mapping from the processed src…")
+            self.root.update_idletasks()
             mapping = Template_Mapping(etl)
             for method_name, attribute in TEMPLATE_EXPORTS:
                 result = getattr(mapping, f"_create_{method_name}")()
@@ -759,15 +798,13 @@ class GoldPromoApp:
                 discount.template_ag, self._output_file(output, "template_ag", timestamp)
             )
             self.pending_discount = discount
-            self.pending_etl = etl
             self.report_button.state(["!disabled"])
             self.finish_discount_button.state(["!disabled"])
-            self.export_src_button.state(["!disabled"])
-            self.stage1_status.config(text=f"Stage 1 complete. Upload the AG result report to finish discount templates. Output: {output}")
-            messagebox.showinfo("Stage 1 complete", "Configuration templates and template_ag.xls were created.")
+            self.stage1_status.config(text=f"Template mapping complete. Upload the AG result report to finish discount templates. Output: {output}")
+            messagebox.showinfo("Template mapping complete", "Configuration templates and template_ag.xls were created.")
         except Exception as error:
-            self.stage1_status.config(text="Stage 1 failed.")
-            messagebox.showerror("Stage 1 failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
+            self.stage1_status.config(text="Template mapping failed.")
+            messagebox.showerror("Template mapping failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
     def export_processed_src(self) -> None:
         etl = self.pending_etl
