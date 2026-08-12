@@ -409,7 +409,7 @@ class PurchaseMixin:
             column_purchase[5]: data["PP START DATE"].dt.strftime("%d/%m/%Y"),
             column_purchase[6]: data["PP END DATE"].dt.strftime("%d/%m/%Y"),
             column_purchase[7]: data["COMMERCIAL CONTRACT"],
-            column_purchase[8]: data["PURCHASE VAT"].map(VAT),
+            column_purchase[8]: data["PURCHASE VAT"].map(VAT).fillna(""),
             column_purchase[9]: data["SUPPLIER CODE"],
             column_purchase[10]: "0",
         }
