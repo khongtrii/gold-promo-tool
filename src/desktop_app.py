@@ -128,12 +128,18 @@ class WorkbookExporter:
         WorkbookExporter.save_with_excel(output_path)
 
     @staticmethod
-    def write_processed_source(source_path: Path, processed: pd.DataFrame, output_path: Path) -> None:
+    def write_processed_source(
+        source_path: Path,
+        processed: pd.DataFrame,
+        output_path: Path,
+        *,
+        include_sitegroup: bool = True,
+    ) -> None:
         """Copy a source workbook and write its processed workflow columns.
 
         The original workbook layout, metadata, and non-``Template`` sheets
-        are retained.  Unlike an error return, this export contains the three
-        values needed by the next Stage 1 run: STRUCTURE, SITE GROUP, and SO.
+        are retained. Before Add Site Group the export contains STRUCTURE and
+        SO only; afterward it also contains SITE GROUP.
         """
         keep_vba = source_path.suffix.lower() == ".xlsm"
         workbook = load_workbook(source_path, keep_vba=keep_vba, data_only=False)
@@ -152,6 +158,18 @@ class WorkbookExporter:
             if note_column is not None:
                 sheet.delete_cols(note_column, 1)
 
+            if not include_sitegroup:
+                sitegroup_column = next(
+                    (
+                        column
+                        for column in range(1, sheet.max_column + 1)
+                        if sheet.cell(header_row, column).value == "SITE GROUP"
+                    ),
+                    None,
+                )
+                if sitegroup_column is not None:
+                    sheet.delete_cols(sitegroup_column, 1)
+
             headers = {
                 str(sheet.cell(header_row, column).value).strip(): column
                 for column in range(1, sheet.max_column + 1)
@@ -162,7 +180,10 @@ class WorkbookExporter:
                 sheet.max_column,
             )
             columns = {}
-            for name in ("STRUCTURE", "SITE GROUP", "SO"):
+            workflow_columns = ["STRUCTURE", "SO"]
+            if include_sitegroup:
+                workflow_columns.insert(1, "SITE GROUP")
+            for name in workflow_columns:
                 column = headers.get(name)
                 if column is None:
                     column = sheet.max_column + 1
@@ -252,11 +273,15 @@ class SiteGroupReview:
         ).pack(anchor="w", padx=12, pady=(12, 6))
         tree_frame = ttk.Frame(self.window)
         tree_frame.pack(fill="both", expand=True, padx=12, pady=6)
-        columns = ("suggested", "members", "network", "expanded", "missing", "missing_detail", "extra", "extra_detail")
+        columns = (
+            "suggested", "members", "structure", "network", "expanded",
+            "missing", "missing_detail", "extra", "extra_detail",
+        )
         self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
         headings = {
             "suggested": "Suggested SITE GROUP CODE",
             "members": "SITE GROUP stores",
+            "structure": "STRUCTURE",
             "network": "GOLD PROMO NETWORK",
             "expanded": "GOLD PROMO NETWORK EXPANDED",
             "missing": "Missing Count",
@@ -264,7 +289,11 @@ class SiteGroupReview:
             "extra": "Extra Count",
             "extra_detail": "Extra Stores",
         }
-        widths = {"suggested": 140, "members": 300, "network": 140, "expanded": 320, "missing": 60, "missing_detail": 260, "extra": 60, "extra_detail": 260}
+        widths = {
+            "suggested": 140, "members": 300, "structure": 90,
+            "network": 140, "expanded": 320, "missing": 60,
+            "missing_detail": 260, "extra": 60, "extra_detail": 260,
+        }
         for column in columns:
             self.tree.heading(column, text=headings[column])
             self.tree.column(column, width=widths[column], anchor="w")
@@ -275,6 +304,7 @@ class SiteGroupReview:
                 values=(
                     suggestion["suggested_code"],
                     members,
+                    suggestion["structure"],
                     suggestion["gold_promo_network"],
                     suggestion["expanded_network"],
                     suggestion["missing_count"],
@@ -329,7 +359,7 @@ class SiteGroupReview:
         values[0] = value
         values[1] = ";".join(self.etl.sitegroup_members.get(value, ()))
         if value and not values[1]:
-            values[1] = values[3]
+            values[1] = values[4]
         self.tree.item(self._edit_item, values=values)
 
     def _cancel_edit(self, event=None) -> None:
@@ -343,7 +373,7 @@ class SiteGroupReview:
             self._finish_edit()
         for item in self.tree.get_children():
             values = self.tree.item(item, "values")
-            network = values[3]
+            network = values[4]
             code = str(values[0]).strip()
             for suggestion in self.suggestions:
                 if suggestion["expanded_network"] == network:
@@ -368,6 +398,7 @@ class SiteGroupReview:
         columns = [
             "Suggested SITE GROUP CODE",
             "SITE GROUP stores",
+            "STRUCTURE",
             "GOLD PROMO NETWORK",
             "GOLD PROMO NETWORK EXPANDED",
             "Missing Count",
@@ -438,7 +469,7 @@ class GoldPromoApp:
         self.stage2_source = StringVar()
         self.stage2_attribute = StringVar()
         self.stage2_output = StringVar(value=str(Path.cwd() / "output"))
-        self.pending_discount: Discount | None = None
+        self.pending_discounts: list[tuple[Path, Discount]] = []
         self.pending_etl: Template_ETL | None = None
 
         self.notebook = ttk.Notebook(root, padding=12)
@@ -520,15 +551,23 @@ class GoldPromoApp:
         self.non_suggested_sitegroup_list.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
         ttk.Separator(frame).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Button(frame, text="Run Pipeline", command=self.run_stage1).grid(row=6, column=0, sticky="w")
-        self.check_oa_button = ttk.Button(frame, text="Create Check OA File", command=self.create_check_oa)
-        self.check_oa_button.grid(row=6, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(frame, text="Validate Pipeline / Get SO", command=self.run_stage1).grid(row=6, column=0, sticky="w")
+        action_frame = ttk.Frame(frame)
+        action_frame.grid(row=6, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        self.check_oa_button = ttk.Button(action_frame, text="Create Check OA File", command=self.create_check_oa)
+        self.check_oa_button.pack(side="left")
         self.check_oa_button.state(["disabled"])
+        self.add_sitegroup_button = ttk.Button(action_frame, text="Add Site Group", command=self.add_sitegroup)
+        self.add_sitegroup_button.pack(side="left", padx=(8, 0))
+        self.add_sitegroup_button.state(["disabled"])
         self.template_mapping_button = ttk.Button(
-            frame, text="Create Template Mapping", command=self.create_template_mapping
+            action_frame, text="Create Other Templates", command=self.create_template_mapping
         )
-        self.template_mapping_button.grid(row=6, column=2, sticky="w", padx=(8, 0))
+        self.template_mapping_button.pack(side="left", padx=(8, 0))
         self.template_mapping_button.state(["disabled"])
+        for variable in (self.stage1_source, self.stage1_master_data, self.stage1_output):
+            variable.trace_add("write", self._update_template_mapping_button)
+        self._update_template_mapping_button()
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 14))
 
@@ -539,6 +578,23 @@ class GoldPromoApp:
         self.export_src_button = ttk.Button(frame, text="Export Processed Src", command=self.export_processed_src)
         self.export_src_button.grid(row=9, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.export_src_button.state(["disabled"])
+
+    def _update_template_mapping_button(self, *_args) -> None:
+        """Allow direct template creation once both inputs and output are selected."""
+        source_paths = [
+            Path(value.strip()).expanduser()
+            for value in self.stage1_source.get().split(";")
+            if value.strip()
+        ]
+        master_path = Path(self.stage1_master_data.get()).expanduser()
+        output_selected = bool(self.stage1_output.get().strip())
+        inputs_ready = (
+            bool(source_paths)
+            and all(path.is_file() for path in source_paths)
+            and master_path.is_file()
+            and output_selected
+        )
+        self.template_mapping_button.state(["!disabled"] if inputs_ready else ["disabled"])
 
     def add_non_suggested_sitegroup(self) -> None:
         codes = [
@@ -662,6 +718,29 @@ class GoldPromoApp:
     def _output_file(output: Path, name: str, timestamp: str, suffix: str = ".xls") -> Path:
         return output / f"{name}_{timestamp}{suffix}"
 
+    @staticmethod
+    def _group_output_dir(output: Path, structure, file_name) -> Path:
+        """Return an output folder named ``STRUCTURE_FILE NAME``."""
+        structure_name = "UNKNOWN_STRUCTURE" if pd.isna(structure) else str(structure).strip()
+        structure_name = structure_name or "UNKNOWN_STRUCTURE"
+        file_name = Path(str(file_name)).name or "UNKNOWN_FILE"
+        folder_name = re.sub(r'[<>:"/\\|?*]+', "_", f"{structure_name}_{file_name}").rstrip(". ")
+        destination = output / folder_name
+        destination.mkdir(parents=True, exist_ok=True)
+        return destination
+
+    def _stage1_groups(self, etl: Template_ETL, output: Path):
+        """Yield an isolated ETL and output folder for every source/structure pair."""
+        for (structure, file_name), data in etl.src.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
+            grouped_etl = copy(etl)
+            grouped_etl.src = data.copy()
+            grouped_etl.non_warehouse_src = (
+                etl.non_warehouse_src.loc[etl.non_warehouse_src.index.intersection(data.index)].copy()
+                if etl.non_warehouse_src is not None
+                else None
+            )
+            yield self._group_output_dir(output, structure, file_name), grouped_etl
+
     def _return_errors(self, sources: list[Path], data: pd.DataFrame, output: Path, stage: str, timestamp: str) -> bool:
         notes = data["NOTE ERR FROM MASTER DATA"].fillna("")
         if not notes.astype(str).str.strip().ne("").any():
@@ -674,9 +753,13 @@ class GoldPromoApp:
             ]
             if source_errors.empty:
                 continue
-            error_path = self._output_file(output, f"{source.stem}_{stage}_errors", timestamp, suffix=".xlsx")
-            WorkbookExporter.write_source_errors(source, source_errors, error_path)
-            error_paths.append(str(error_path))
+            for structure, structure_errors in source_errors.groupby("STRUCTURE", sort=False, dropna=False):
+                group_output = self._group_output_dir(output, structure, source.name)
+                error_path = self._output_file(
+                    group_output, f"{source.stem}_{stage}_errors", timestamp, suffix=".xlsx"
+                )
+                WorkbookExporter.write_source_errors(source, structure_errors, error_path)
+                error_paths.append(str(error_path))
         messagebox.showerror("Validation errors", "Processing stopped. Error source returned:\n" + "\n".join(error_paths))
         return True
 
@@ -708,10 +791,9 @@ class GoldPromoApp:
         if data is None or data.empty:
             return []
 
-        destination = output / "non-warehouse"
-        destination.mkdir(parents=True, exist_ok=True)
         paths = []
-        for file_name, source_data in data.groupby("FILE NAME", sort=False):
+        for (structure, file_name), source_data in data.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
+            destination = GoldPromoApp._group_output_dir(output, structure, file_name)
             path = destination / f"{Path(str(file_name)).stem}_non_warehouse_{timestamp}.xlsx"
             source_data.drop(columns=["_SOURCE_ROW"], errors="ignore").to_excel(path, index=False)
             paths.append(path)
@@ -728,9 +810,9 @@ class GoldPromoApp:
         try:
             # Do not allow actions to use artifacts from an earlier pipeline run.
             self.pending_etl = None
-            self.pending_discount = None
+            self.pending_discounts = []
             self.check_oa_button.state(["disabled"])
-            self.template_mapping_button.state(["disabled"])
+            self.add_sitegroup_button.state(["disabled"])
             self.export_src_button.state(["disabled"])
             self.report_button.state(["disabled"])
             self.finish_discount_button.state(["disabled"])
@@ -743,33 +825,14 @@ class GoldPromoApp:
                 non_suggested_sitegroup_codes=self._non_suggested_sitegroup_codes(),
             )
             etl._load_sitegroup()._load_network()._load_src()
-            if etl.has_missing_so_or_sitegroup():
-                should_continue = messagebox.askyesno(
-                    "Missing Site Group or SO",
-                    "SITE GROUP hoặc SO có dữ liệu trống.\n\n"
-                    "Chọn Continue để xóa dữ liệu của cả hai cột và tạo lại Get SO + Get Site Group.\n"
-                    "Chọn No để giữ nguyên dữ liệu và dừng xử lý.",
-                    parent=self.root,
-                )
-                if not should_continue:
-                    self.stage1_status.config(text="Stopped: existing SITE GROUP, SO, and STRUCTURE values were kept.")
-                    return
-                etl.clear_so_and_sitegroup()
+            # Always discard old workflow values. Validate recreates SO now;
+            # Add Site Group recreates SITE GROUP in the following step.
+            etl.clear_so_and_sitegroup()
             etl._pipeline()._load_plan()
             if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                 self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
                 return
 
-            suggestions = etl.get_sitegroup_suggestions() if etl.should_generate_so_sitegroup else []
-            if suggestions:
-                self.stage1_status.config(text="Review Site Group suggestions before template generation.")
-                SiteGroupReview(
-                    self.root,
-                    etl,
-                    suggestions,
-                    lambda: self._complete_stage1_pipeline(etl, output, timestamp),
-                )
-                return
             self._complete_stage1_pipeline(etl, output, timestamp)
         except Exception as error:  # Show useful detail while keeping the GUI alive.
             self.stage1_status.config(text="Stage 1 failed.")
@@ -779,16 +842,14 @@ class GoldPromoApp:
         try:
             self._export_non_warehouse(etl, output, timestamp)
             self.pending_etl = etl
-            self._record_used_sitegroups(etl)
             self.check_oa_button.state(["!disabled"])
-            self.template_mapping_button.state(["!disabled"])
             self.export_src_button.state(["!disabled"])
             self.stage1_status.config(
-                text="Pipeline complete. Create Check OA, template mapping, or export the processed src."
+                text="Validation and Get SO complete. You can export the processed src or create Check OA next."
             )
             messagebox.showinfo(
                 "Pipeline complete",
-                "The processed src is ready for Check OA, template mapping, or export.",
+                "Validation and Get SO are complete. You can export STRUCTURE + SO now, or create Check OA next.",
             )
         except Exception as error:
             self.stage1_status.config(text="Stage 1 pipeline failed.")
@@ -807,41 +868,129 @@ class GoldPromoApp:
         try:
             self.stage1_status.config(text="Creating Check OA file from the processed src…")
             self.root.update_idletasks()
-            mapping = Template_Mapping(etl)._create_check_oa()
-            output_path = self._output_file(output, "template_check_oa", timestamp)
-            WorkbookExporter.write_template(mapping.template_check_oa, output_path)
-            self.stage1_status.config(text=f"Check OA file created: {output_path}")
-            messagebox.showinfo("Check OA complete", f"Created:\n{output_path}")
+            output_paths = []
+            for group_output, grouped_etl in self._stage1_groups(etl, output):
+                mapping = Template_Mapping(grouped_etl)._create_check_oa()
+                output_path = self._output_file(group_output, "template_check_oa", timestamp)
+                WorkbookExporter.write_template(mapping.template_check_oa, output_path)
+                output_paths.append(str(output_path))
+            self.add_sitegroup_button.state(["!disabled"])
+            self.stage1_status.config(text=f"Check OA files created in {len(output_paths)} output folder(s).")
+            messagebox.showinfo(
+                "Check OA complete",
+                "Created:\n" + "\n".join(output_paths) + "\n\nIf OA is OK, continue with Add Site Group.",
+            )
         except Exception as error:
             self.stage1_status.config(text="Check OA creation failed.")
             messagebox.showerror("Check OA creation failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
-    def create_template_mapping(self) -> None:
-        """Create templates from the processed ETL source without reloading input."""
+    def add_sitegroup(self) -> None:
+        """Resolve and save Site Groups after the Check OA review is complete."""
         etl = self.pending_etl
         if etl is None or etl.src is None:
             messagebox.showerror("Pipeline required", "Run the Stage 1 pipeline first.")
             return
+        try:
+            self.stage1_status.config(text="Preparing Site Group matches and suggestions…")
+            self.root.update_idletasks()
+            if etl.should_generate_so_sitegroup:
+                etl.src = etl._get_sitegroup(etl.src)
+                suggestions = etl.get_sitegroup_suggestions()
+                if suggestions:
+                    self.stage1_status.config(text="Review Site Group suggestions before creating other templates.")
+                    SiteGroupReview(self.root, etl, suggestions, self._complete_add_sitegroup)
+                    return
+            self._complete_add_sitegroup()
+        except Exception as error:
+            self.stage1_status.config(text="Add Site Group failed.")
+            messagebox.showerror("Add Site Group failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
+
+    def _complete_add_sitegroup(self) -> None:
+        etl = self.pending_etl
+        if etl is None:
+            return
+        etl.should_generate_so_sitegroup = False
+        self._record_used_sitegroups(etl)
+        self.add_sitegroup_button.state(["disabled"])
+        self.template_mapping_button.state(["!disabled"])
+        self.export_src_button.state(["!disabled"])
+        self.stage1_status.config(text="Site Group complete. Create the remaining templates or export the processed src.")
+        messagebox.showinfo("Site Group complete", "Site Groups are ready. You can now create the remaining templates.")
+
+    @staticmethod
+    def _missing_sitegroup_or_so(etl: Template_ETL) -> list[str]:
+        if etl.src is None:
+            return ["SITE GROUP", "SO"]
+        return [
+            column
+            for column in ("SITE GROUP", "SO")
+            if column not in etl.src.columns
+            or etl.src[column].fillna("").astype(str).str.strip().eq("").any()
+        ]
+
+    def _show_incomplete_template_source(self, missing_columns: list[str]) -> None:
+        messagebox.showerror(
+            "Other templates not ready",
+            "Missing or incomplete values in: " + ", ".join(missing_columns)
+            + ".\n\nRun Validate Pipeline, Check OA, and Add Site Group first, "
+            "then use the exported processed source.",
+            parent=self.root,
+        )
+
+    def create_template_mapping(self) -> None:
+        """Create templates from memory or directly from a completed processed source."""
+        etl = self.pending_etl
         output = self._output_dir(self.stage1_output)
         if output is None:
             return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
             self.stage1_status.config(text="Creating template mapping from the processed src…")
+            if etl is None or etl.src is None or etl.src.empty:
+                if not messagebox.askyesno(
+                    "Use input files?",
+                    "No processed source is loaded in this session.\n\n"
+                    "Use the selected Gold Promo source and Master data file?",
+                    parent=self.root,
+                ):
+                    return
+                sources = self._source_paths(self.stage1_source)
+                master_paths = self._required_paths(self.stage1_master_data)
+                if sources is None or master_paths is None:
+                    return
+                master_data = master_paths[0]
+                etl = Template_ETL(sources, master_data, master_data)
+                etl._load_sitegroup()._load_network()._load_src()
+                missing_columns = self._missing_sitegroup_or_so(etl)
+                if missing_columns:
+                    self._show_incomplete_template_source(missing_columns)
+                    return
+                etl.should_generate_so_sitegroup = False
+                etl._pipeline()._load_plan()
+                if self._return_errors(sources, etl.src, output, "stage1", timestamp):
+                    return
+                self.pending_etl = etl
+            missing_columns = self._missing_sitegroup_or_so(etl)
+            if missing_columns:
+                self._show_incomplete_template_source(missing_columns)
+                return
             self.root.update_idletasks()
-            mapping = Template_Mapping(etl)
-            for method_name, attribute in TEMPLATE_EXPORTS:
-                result = getattr(mapping, f"_create_{method_name}")()
-                WorkbookExporter.write_template(
-                    getattr(result, attribute), self._output_file(output, attribute, timestamp)
-                )
+            pending_discounts = []
+            for group_output, grouped_etl in self._stage1_groups(etl, output):
+                mapping = Template_Mapping(grouped_etl)
+                for method_name, attribute in TEMPLATE_EXPORTS:
+                    result = getattr(mapping, f"_create_{method_name}")()
+                    WorkbookExporter.write_template(
+                        getattr(result, attribute), self._output_file(group_output, attribute, timestamp)
+                    )
 
-            discount = Discount(etl, username=self.username.get().strip() or "user")
-            discount._create_ag_raw()._create_ag()
-            WorkbookExporter.write_template(
-                discount.template_ag, self._output_file(output, "template_ag", timestamp)
-            )
-            self.pending_discount = discount
+                discount = Discount(grouped_etl, username=self.username.get().strip() or "user")
+                discount._create_ag_raw()._create_ag()
+                WorkbookExporter.write_template(
+                    discount.template_ag, self._output_file(group_output, "template_ag", timestamp)
+                )
+                pending_discounts.append((group_output, discount))
+            self.pending_discounts = pending_discounts
             self.report_button.state(["!disabled"])
             self.finish_discount_button.state(["!disabled"])
             self.stage1_status.config(text=f"Template mapping complete. Upload the AG result report to finish discount templates. Output: {output}")
@@ -858,25 +1007,29 @@ class GoldPromoApp:
         if output is None:
             return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
-        processed_output = output / "src_processed"
         try:
-            processed_output.mkdir(parents=True, exist_ok=True)
             paths = []
             sources_by_name = {source.name: source for source in etl.path_src}
-            for file_name, data in etl.src.groupby("FILE NAME", sort=False):
+            for (structure, file_name), data in etl.src.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
+                processed_output = self._group_output_dir(output, structure, file_name)
                 source_name = Path(str(file_name)).stem
                 source = sources_by_name[str(file_name)]
                 suffix = source.suffix if source.suffix.lower() in {".xlsx", ".xlsm"} else ".xlsx"
                 path = processed_output / f"{source_name}_processed_{timestamp}{suffix}"
-                WorkbookExporter.write_processed_source(source, data, path)
+                WorkbookExporter.write_processed_source(
+                    source,
+                    data,
+                    path,
+                    include_sitegroup=not etl.should_generate_so_sitegroup,
+                )
                 paths.append(str(path))
-            self.stage1_status.config(text=f"Processed source files exported: {processed_output}")
+            self.stage1_status.config(text=f"Processed source files exported to {len(paths)} output folder(s).")
             messagebox.showinfo("Export complete", "Processed src files saved:\n" + "\n".join(paths))
         except Exception as error:
             messagebox.showerror("Export failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
     def finish_discount(self) -> None:
-        if self.pending_discount is None:
+        if not self.pending_discounts:
             return
         paths = self._required_paths(self.report_ag)
         output = self._output_dir(self.stage1_output)
@@ -884,17 +1037,28 @@ class GoldPromoApp:
             return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
-            discount = self.pending_discount._update(paths[0])
-            if discount.report_err is not None and not discount.report_err.empty:
-                WorkbookExporter.write_template(
-                    discount.report_err,
-                    self._output_file(output, "report_ag_errors", timestamp),
-                )
+            for group_output, pending_discount in self.pending_discounts:
+                discount = pending_discount._update(paths[0])
+                if discount.report_err is not None and not discount.report_err.empty:
+                    report_err = discount.report_err
+                    if "DEPT" in report_err.columns:
+                        department_codes = {
+                            f"0{str(structure).strip()}0"
+                            for structure in discount.src["STRUCTURE"].dropna().unique()
+                        }
+                        report_err = report_err.loc[
+                            report_err["DEPT"].fillna("").astype(str).str.strip().isin(department_codes)
+                        ]
+                    if not report_err.empty:
+                        WorkbookExporter.write_template(
+                            report_err,
+                            self._output_file(group_output, "report_ag_errors", timestamp),
+                        )
 
-            discount = discount._create_dc()._create_de()
-            WorkbookExporter.write_template(discount.template_dc_free, self._output_file(output, "template_dc_free", timestamp))
-            WorkbookExporter.write_template(discount.template_dc_money, self._output_file(output, "template_dc_money", timestamp))
-            WorkbookExporter.write_template(discount.template_de, self._output_file(output, "template_de", timestamp))
+                discount = discount._create_dc()._create_de()
+                WorkbookExporter.write_template(discount.template_dc_free, self._output_file(group_output, "template_dc_free", timestamp))
+                WorkbookExporter.write_template(discount.template_dc_money, self._output_file(group_output, "template_dc_money", timestamp))
+                WorkbookExporter.write_template(discount.template_de, self._output_file(group_output, "template_de", timestamp))
             self.stage1_status.config(text=f"Discount templates complete. Output: {output}")
             messagebox.showinfo("Discount complete", "Discount configuration templates were created.")
         except Exception as error:
@@ -939,12 +1103,16 @@ class GoldPromoApp:
                 source_etl = Template_ETL(sources)
                 source_etl._load_src_listoff()._pipeline2()._load_network()
                 if not self._return_errors(sources, source_etl.src_listoff, output, "stage2", timestamp):
-                    sale_price = SalePrice(source_etl)._create_sp()
-                    WorkbookExporter.write_template(
-                        sale_price.template_sp,
-                        self._output_file(output, "template_sale_price", timestamp),
-                    )
-                    created.append("template_sale_price.xls")
+                    for (structure, file_name), data in source_etl.src_listoff.groupby(
+                        ["STRUCTURE", "FILE NAME"], sort=False, dropna=False
+                    ):
+                        grouped_etl = copy(source_etl)
+                        grouped_etl.src_listoff = data.copy()
+                        group_output = self._group_output_dir(output, structure, file_name)
+                        sale_price = SalePrice(grouped_etl)._create_sp()
+                        output_path = self._output_file(group_output, "template_sale_price", timestamp)
+                        WorkbookExporter.write_template(sale_price.template_sp, output_path)
+                        created.append(str(output_path))
             except Exception as error:
                 messagebox.showerror("Sale Price processing failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
@@ -967,8 +1135,8 @@ class GoldPromoApp:
                 messagebox.showerror("Attribute processing failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 
         if created:
-            self.stage2_status.config(text=f"Stage 2 complete: {', '.join(created)}. Output: {output}")
-            messagebox.showinfo("Stage 2 complete", "Created: " + ", ".join(created))
+            self.stage2_status.config(text=f"Stage 2 complete: {len(created)} file(s). Output: {output}")
+            messagebox.showinfo("Stage 2 complete", "Created:\n" + "\n".join(created))
         else:
             self.stage2_status.config(text="Stage 2 did not create an output. Review the error messages.")
 
