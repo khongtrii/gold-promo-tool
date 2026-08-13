@@ -213,6 +213,10 @@ service-account.json
 **/sample.xlsx
 *.pid
 *.seed
+.sitegroup_state.lock
+.sitegroup_state.json.*.tmp
+.tmp_sitegroup_state_test/
+tmp*/
 
 **/output/
 **/upload/

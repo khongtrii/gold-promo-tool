@@ -24,6 +24,16 @@ import xlwt
 
 from src.service.template_mapping import Discount, SalePrice, Template_Mapping
 from src.service.template_service import Template_ETL
+from src.data_file_paths import default_master_data_path
+from src.sitegroup_state import (
+    add_excluded_sitegroup,
+    get_excluded_sitegroups,
+    get_sitegroup_state_path,
+    load_sitegroup_state,
+    remove_excluded_sitegroup,
+    set_active_status,
+    try_acquire_active_status,
+)
 from src._version import __version__
 
 
@@ -251,10 +261,18 @@ class WorkbookExporter:
 class SiteGroupReview:
     """Confirmation window for non-exact Site Group network matches."""
 
-    def __init__(self, parent: Tk, etl: Template_ETL, suggestions: list[dict], on_continue) -> None:
+    def __init__(
+        self,
+        parent: Tk,
+        etl: Template_ETL,
+        suggestions: list[dict],
+        on_continue,
+        on_close,
+    ) -> None:
         self.etl = etl
         self.suggestions = suggestions
         self.on_continue = on_continue
+        self.on_close = on_close
         self._edit_item = None
         self._edit_entry = None
         self.window = Toplevel(parent)
@@ -262,6 +280,7 @@ class SiteGroupReview:
         self.window.minsize(1240, 480)
         self.window.transient(parent)
         self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         ttk.Label(
             self.window,
@@ -427,19 +446,24 @@ class SiteGroupReview:
             return
         try:
             self.etl.update_sitegroup_file(self.suggestions)
+            self.etl.apply_sitegroup_suggestions(self.suggestions)
         except Exception as error:
             messagebox.showerror(
                 "Site Group update failed",
                 f"Cannot update the site-group sheet:\n{error}",
                 parent=self.window,
             )
+            self.close()
             return
-        self.etl.apply_sitegroup_suggestions(self.suggestions)
         self.continue_workflow()
 
     def continue_workflow(self) -> None:
         self.window.destroy()
         self.on_continue()
+
+    def close(self) -> None:
+        self.window.destroy()
+        self.on_close()
 
 
 class GoldPromoApp:
@@ -459,10 +483,9 @@ class GoldPromoApp:
 
         self.stage1_source = StringVar()
         self.stage1_master_data = StringVar(
-            value=str(Path.cwd() / "data" / "reference" / "master-data-file.xlsm")
+            value=default_master_data_path()
         )
         self.stage1_output = StringVar(value=str(Path.cwd() / "output"))
-        self.username = StringVar(value="user")
         self.non_suggested_sitegroup_input = StringVar()
         self.report_ag = StringVar()
 
@@ -471,6 +494,10 @@ class GoldPromoApp:
         self.stage2_output = StringVar(value=str(Path.cwd() / "output"))
         self.pending_discounts: list[tuple[Path, Discount]] = []
         self.pending_etl: Template_ETL | None = None
+        self._sitegroup_session_active = False
+        self._active_sitegroup_state_path: Path | None = None
+        self._exclude_refresh_job = None
+        self._closing = False
 
         self.notebook = ttk.Notebook(root, padding=12)
         self.notebook.pack(fill="both", expand=True)
@@ -481,6 +508,8 @@ class GoldPromoApp:
 
         self._build_stage1()
         self._build_stage2()
+        self._refresh_excluded_sitegroups()
+        self.root.protocol("WM_DELETE_WINDOW", self._close_application)
         self.version_label.lift()
 
     @staticmethod
@@ -554,8 +583,6 @@ class GoldPromoApp:
         self._source_file_row(frame, 0, self.stage1_source, excel_files)
         self._file_row(frame, 1, "Master data file", self.stage1_master_data, excel_files)
         self._directory_row(frame, 2, self.stage1_output)
-        ttk.Label(frame, text="Username in AG description").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=5)
-        ttk.Entry(frame, textvariable=self.username, width=30).grid(row=3, column=1, sticky="w", pady=5)
 
         excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes not used for suggestions", padding=8)
         excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
@@ -583,8 +610,7 @@ class GoldPromoApp:
         )
         self.template_mapping_button.pack(side="left", padx=(8, 0))
         self.template_mapping_button.state(["disabled"])
-        for variable in (self.stage1_source, self.stage1_master_data, self.stage1_output):
-            variable.trace_add("write", self._update_template_mapping_button)
+        self.stage1_source.trace_add("write", self._update_template_mapping_button)
         self._update_template_mapping_button()
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 14))
@@ -600,20 +626,13 @@ class GoldPromoApp:
         self.export_src_button.state(["disabled"])
 
     def _update_template_mapping_button(self, *_args) -> None:
-        """Allow direct template creation once both inputs and output are selected."""
+        """Allow direct template creation once source input files are selected."""
         source_paths = [
             Path(value.strip()).expanduser()
             for value in self.stage1_source.get().split(";")
             if value.strip()
         ]
-        master_path = Path(self.stage1_master_data.get()).expanduser()
-        output_selected = bool(self.stage1_output.get().strip())
-        inputs_ready = (
-            bool(source_paths)
-            and all(path.is_file() for path in source_paths)
-            and master_path.is_file()
-            and output_selected
-        )
+        inputs_ready = bool(source_paths) and all(path.is_file() for path in source_paths)
         self.template_mapping_button.state(["!disabled"] if inputs_ready else ["disabled"])
 
     def add_non_suggested_sitegroup(self) -> None:
@@ -624,26 +643,96 @@ class GoldPromoApp:
         ]
         if not codes:
             return
-        existing_codes = set(self.non_suggested_sitegroup_list.get(0, "end"))
-        for code in codes:
-            if code not in existing_codes:
-                self.non_suggested_sitegroup_list.insert("end", code)
-                existing_codes.add(code)
-        self.non_suggested_sitegroup_input.set("")
+        state_path = self._sitegroup_state_path()
+        if state_path is None:
+            messagebox.showerror("Catalogue required", "Run Validate Pipeline to identify the catalogue first.", parent=self.root)
+            return
+        try:
+            latest_codes = get_excluded_sitegroups(state_path)
+            for code in codes:
+                latest_codes = add_excluded_sitegroup(code, state_path)
+            self._sync_excluded_sitegroup_ui(latest_codes)
+            self.non_suggested_sitegroup_input.set("")
+        except Exception as error:
+            messagebox.showerror("Exclude Site Group failed", str(error), parent=self.root)
 
     def remove_non_suggested_sitegroup(self) -> None:
-        selected = list(self.non_suggested_sitegroup_list.curselection())
-        for index in reversed(selected):
-            self.non_suggested_sitegroup_list.delete(index)
+        selected_codes = [
+            self.non_suggested_sitegroup_list.get(index)
+            for index in self.non_suggested_sitegroup_list.curselection()
+        ]
+        state_path = self._sitegroup_state_path()
+        if state_path is None:
+            return
+        try:
+            latest_codes = get_excluded_sitegroups(state_path)
+            for code in selected_codes:
+                latest_codes = remove_excluded_sitegroup(code, state_path)
+            self._sync_excluded_sitegroup_ui(latest_codes)
+        except Exception as error:
+            messagebox.showerror("Exclude Site Group failed", str(error), parent=self.root)
 
     def _non_suggested_sitegroup_codes(self) -> list[str]:
-        return list(self.non_suggested_sitegroup_list.get(0, "end"))
+        state_path = self._sitegroup_state_path()
+        return get_excluded_sitegroups(state_path) if state_path is not None else []
+
+    def _sitegroup_state_path(self, etl: Template_ETL | None = None) -> Path | None:
+        current_etl = etl or self.pending_etl
+        if current_etl is None or not current_etl.cata:
+            return None
+        return get_sitegroup_state_path(current_etl.cata)
+
+    def _sync_excluded_sitegroup_ui(self, codes: list[str]) -> None:
+        current_codes = list(self.non_suggested_sitegroup_list.get(0, "end"))
+        if current_codes == codes:
+            return
+        self.non_suggested_sitegroup_list.delete(0, "end")
+        for code in codes:
+            self.non_suggested_sitegroup_list.insert("end", code)
+
+    def _refresh_excluded_sitegroups(self) -> None:
+        if self._closing or not self.root.winfo_exists():
+            return
+        try:
+            state_path = self._sitegroup_state_path()
+            codes = get_excluded_sitegroups(state_path) if state_path is not None else []
+            self._sync_excluded_sitegroup_ui(codes)
+        except Exception:
+            # Keep the UI responsive; the next polling cycle retries the read.
+            pass
+        self._exclude_refresh_job = self.root.after(5000, self._refresh_excluded_sitegroups)
+
+    def _release_sitegroup_session(self) -> None:
+        if not self._sitegroup_session_active:
+            return
+        try:
+            state_path = self._active_sitegroup_state_path
+            if state_path is not None:
+                set_active_status("no", state_path)
+        finally:
+            self._sitegroup_session_active = False
+            self._active_sitegroup_state_path = None
+
+    def _close_application(self) -> None:
+        self._closing = True
+        if self._exclude_refresh_job is not None:
+            try:
+                self.root.after_cancel(self._exclude_refresh_job)
+            except Exception:
+                pass
+            self._exclude_refresh_job = None
+        try:
+            self._release_sitegroup_session()
+        finally:
+            self.root.destroy()
 
     def _record_used_sitegroups(self, etl: Template_ETL) -> None:
         """Add this run's Site Groups to the user-maintained reservation list."""
         if etl.src is None:
             return
-        existing_codes = set(self.non_suggested_sitegroup_list.get(0, "end"))
+        state_path = self._sitegroup_state_path(etl)
+        if state_path is None:
+            raise FileNotFoundError("Cannot determine the catalogue-specific Site Group state file.")
         used_codes = sorted(
             {
                 str(code).strip()
@@ -651,10 +740,10 @@ class GoldPromoApp:
                 if str(code).strip()
             }
         )
+        latest_codes = get_excluded_sitegroups(state_path)
         for code in used_codes:
-            if code not in existing_codes:
-                self.non_suggested_sitegroup_list.insert("end", code)
-                existing_codes.add(code)
+            latest_codes = add_excluded_sitegroup(code, state_path)
+        self._sync_excluded_sitegroup_ui(latest_codes)
 
     def _choose_attribute_sheet(self, path: Path) -> str | None:
         """Show a modal selector for the worksheet to use as Attribute data."""
@@ -842,9 +931,8 @@ class GoldPromoApp:
                 sources,
                 master_data,
                 master_data,
-                non_suggested_sitegroup_codes=self._non_suggested_sitegroup_codes(),
             )
-            etl._load_sitegroup()._load_network()._load_src()
+            etl._load_network()._load_src()
             # Always discard old workflow values. Validate recreates SO now;
             # Add Site Group recreates SITE GROUP in the following step.
             etl.clear_so_and_sitegroup()
@@ -911,31 +999,72 @@ class GoldPromoApp:
             messagebox.showerror("Pipeline required", "Run the Stage 1 pipeline first.")
             return
         try:
+            state_path = self._sitegroup_state_path(etl)
+            if state_path is None:
+                raise FileNotFoundError("Cannot find the OneDrive data_file_system folder for this catalogue.")
+            load_sitegroup_state(state_path)
+            if not try_acquire_active_status(state_path):
+                messagebox.showwarning(
+                    "Site Group is in use",
+                    "Another user is currently using Site Group.\nPlease wait and try again.",
+                    parent=self.root,
+                )
+                return
+            self._sitegroup_session_active = True
+            self._active_sitegroup_state_path = state_path
+        except Exception as error:
+            messagebox.showerror("Site Group state failed", str(error), parent=self.root)
+            return
+        try:
             self.stage1_status.config(text="Preparing Site Group matches and suggestions…")
             self.root.update_idletasks()
+            etl._load_sitegroup()
+            excluded_codes = get_excluded_sitegroups(state_path)
+            etl.non_suggested_sitegroup_codes = set(excluded_codes)
+            self._sync_excluded_sitegroup_ui(excluded_codes)
             if etl.should_generate_so_sitegroup:
                 etl.src = etl._get_sitegroup(etl.src)
                 suggestions = etl.get_sitegroup_suggestions()
                 if suggestions:
                     self.stage1_status.config(text="Review Site Group suggestions before creating other templates.")
-                    SiteGroupReview(self.root, etl, suggestions, self._complete_add_sitegroup)
+                    SiteGroupReview(
+                        self.root,
+                        etl,
+                        suggestions,
+                        self._complete_add_sitegroup,
+                        self._cancel_add_sitegroup,
+                    )
                     return
             self._complete_add_sitegroup()
         except Exception as error:
             self.stage1_status.config(text="Add Site Group failed.")
             messagebox.showerror("Add Site Group failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
+            self._release_sitegroup_session()
+
+    def _cancel_add_sitegroup(self) -> None:
+        try:
+            self.stage1_status.config(text="Add Site Group closed.")
+        finally:
+            self._release_sitegroup_session()
 
     def _complete_add_sitegroup(self) -> None:
         etl = self.pending_etl
         if etl is None:
+            self._release_sitegroup_session()
             return
-        etl.should_generate_so_sitegroup = False
-        self._record_used_sitegroups(etl)
-        self.add_sitegroup_button.state(["disabled"])
-        self.template_mapping_button.state(["!disabled"])
-        self.export_src_button.state(["!disabled"])
-        self.stage1_status.config(text="Site Group complete. Create the remaining templates or export the processed src.")
-        messagebox.showinfo("Site Group complete", "Site Groups are ready. You can now create the remaining templates.")
+        try:
+            etl.should_generate_so_sitegroup = False
+            self._record_used_sitegroups(etl)
+            self.add_sitegroup_button.state(["disabled"])
+            self.template_mapping_button.state(["!disabled"])
+            self.export_src_button.state(["!disabled"])
+            self.stage1_status.config(text="Site Group complete. Create the remaining templates or export the processed src.")
+            messagebox.showinfo("Site Group complete", "Site Groups are ready. You can now create the remaining templates.")
+        except Exception as error:
+            self.stage1_status.config(text="Add Site Group failed.")
+            messagebox.showerror("Add Site Group failed", str(error), parent=self.root)
+        finally:
+            self._release_sitegroup_session()
 
     @staticmethod
     def _missing_sitegroup_or_so(etl: Template_ETL) -> list[str]:
@@ -956,6 +1085,70 @@ class GoldPromoApp:
             "then use the exported processed source.",
             parent=self.root,
         )
+
+    def _request_ag_usernames(self, etl: Template_ETL) -> dict[tuple[str, str], str] | None:
+        """Request the AG username to apply to each structure/source pair."""
+        groups = [
+            (str(structure).strip(), str(file_name).strip())
+            for structure, file_name in etl.src[["STRUCTURE", "FILE NAME"]]
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        ]
+        dialog = Toplevel(self.root)
+        dialog.title("AG Username")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        result: dict[tuple[str, str], str] | None = None
+        username_variables: dict[tuple[str, str], StringVar] = {}
+
+        if len(groups) == 1:
+            group = groups[0]
+            ttk.Label(dialog, text=f"STRUCTURE: {group[0]}\nFILE NAME: {group[1]}").grid(
+                row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 8)
+            )
+            ttk.Label(dialog, text="Username").grid(row=1, column=0, sticky="w", padx=(12, 8), pady=5)
+            variable = StringVar()
+            username_variables[group] = variable
+            first_entry = ttk.Entry(dialog, textvariable=variable, width=32)
+            first_entry.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=5)
+        else:
+            for column, heading in enumerate(("STRUCTURE", "FILE NAME", "USERNAME")):
+                ttk.Label(dialog, text=heading).grid(
+                    row=0, column=column, sticky="w", padx=8, pady=(12, 6)
+                )
+            first_entry = None
+            for row, group in enumerate(groups, start=1):
+                ttk.Label(dialog, text=group[0]).grid(row=row, column=0, sticky="w", padx=8, pady=3)
+                ttk.Label(dialog, text=group[1]).grid(row=row, column=1, sticky="w", padx=8, pady=3)
+                variable = StringVar()
+                username_variables[group] = variable
+                entry = ttk.Entry(dialog, textvariable=variable, width=28)
+                entry.grid(row=row, column=2, sticky="ew", padx=8, pady=3)
+                if first_entry is None:
+                    first_entry = entry
+
+        button_row = len(groups) + 1 if len(groups) > 1 else 2
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=button_row, column=0, columnspan=3, sticky="e", padx=12, pady=12)
+
+        def submit() -> None:
+            nonlocal result
+            missing_groups = [group for group, variable in username_variables.items() if not variable.get().strip()]
+            if missing_groups:
+                messagebox.showerror("Missing username", "Enter a username for every STRUCTURE and FILE NAME.", parent=dialog)
+                return
+            result = {group: variable.get().strip() for group, variable in username_variables.items()}
+            dialog.destroy()
+
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(button_frame, text="OK", command=submit).pack(side="right", padx=(0, 6))
+        dialog.bind("<Return>", lambda _event: submit())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        if first_entry is not None:
+            first_entry.focus_set()
+        self.root.wait_window(dialog)
+        return result
 
     def create_template_mapping(self) -> None:
         """Create templates from memory or directly from a completed processed source."""
@@ -980,7 +1173,7 @@ class GoldPromoApp:
                     return
                 master_data = master_paths[0]
                 etl = Template_ETL(sources, master_data, master_data)
-                etl._load_sitegroup()._load_network()._load_src()
+                etl._load_network()._load_src()
                 missing_columns = self._missing_sitegroup_or_so(etl)
                 if missing_columns:
                     self._show_incomplete_template_source(missing_columns)
@@ -994,6 +1187,10 @@ class GoldPromoApp:
             if missing_columns:
                 self._show_incomplete_template_source(missing_columns)
                 return
+            usernames = self._request_ag_usernames(etl)
+            if usernames is None:
+                self.stage1_status.config(text="Create Other Templates cancelled.")
+                return
             self.root.update_idletasks()
             pending_discounts = []
             for group_output, grouped_etl in self._stage1_groups(etl, output):
@@ -1004,7 +1201,9 @@ class GoldPromoApp:
                         getattr(result, attribute), self._output_file(group_output, attribute, timestamp)
                     )
 
-                discount = Discount(grouped_etl, username=self.username.get().strip() or "user")
+                group_row = grouped_etl.src.iloc[0]
+                group_key = (str(group_row["STRUCTURE"]).strip(), str(group_row["FILE NAME"]).strip())
+                discount = Discount(grouped_etl, username=usernames[group_key])
                 discount._create_ag_raw()._create_ag()
                 WorkbookExporter.write_template(
                     discount.template_ag, self._output_file(group_output, "template_ag", timestamp)

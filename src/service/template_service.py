@@ -1161,7 +1161,7 @@ class Template_ETL:
                 self._append_note_err(
                     data,
                     idx,
-                    "Allocation values must be integers greater than 0 for Site(s): "
+                    "Thông tin phân bổ phải là số nguyên và lớn hơn 0: "
                     + ", ".join(invalid_allocation_sites)
                     + ".",
                 )

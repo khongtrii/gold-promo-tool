@@ -452,7 +452,7 @@ class POCommitmentMixin(AllocationMixin):
             column_po_commitment[4]: data["LU"],
             column_po_commitment[5]: data["PURCHASE NETWORK EXPANDED"],
             column_po_commitment[7]: "2",
-            # column_po_commitment[8]: data["SUPPLIER CODE"],
+            "SUPPLIER": data["SUPPLIER CODE"],
         }
 
         template_po_commitment = pd.DataFrame(template_po_commitment)
