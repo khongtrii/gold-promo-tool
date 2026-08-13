@@ -396,25 +396,12 @@ class Template_ETL:
             sources.append(data)
 
         self.src = pd.concat(sources, ignore_index=True)
-        self.should_generate_so_sitegroup = self.has_missing_so_or_sitegroup()
+        self.should_generate_so_sitegroup = True
 
         return self
 
-    def has_missing_so_or_sitegroup(self) -> bool:
-        """Return whether SITE GROUP or SO has a blank value.
-
-        STRUCTURE is derived from each source workbook's metadata and must not
-        cause an otherwise completed Site Group/SO file to be regenerated.
-        """
-        if self.src is None:
-            return False
-        return any(
-            self.src[column].fillna("").astype(str).str.strip().eq("").any()
-            for column in ("SITE GROUP", "SO")
-        )
-
     def clear_so_and_sitegroup(self) -> "Template_ETL":
-        """Clear SITE GROUP and SO before recreating them as one unit."""
+        """Clear prior SITE GROUP and SO values for a fresh Stage 1 run."""
         if self.src is not None:
             self.src[["SITE GROUP", "SO"]] = ""
         self.should_generate_so_sitegroup = True
@@ -858,8 +845,17 @@ class Template_ETL:
             raw_networks = sorted(
                 {str(value) for value in rows["GOLD PROMO NETWORK"].dropna() if str(value).strip()}
             )
+            structures = sorted(
+                {
+                    f"0{str(value).strip()}"
+                    for value in rows["STRUCTURE"].dropna()
+                    if str(value).strip()
+                },
+                key=self._sort_key,
+            )
             suggestions.append(
                 {
+                    "structure": ";".join(structures),
                     "gold_promo_network": "; ".join(raw_networks),
                     "expanded_network": network,
                     "suggested_code": code,
@@ -1236,10 +1232,9 @@ class Template_ETL:
         blank_structure = data["STRUCTURE"].fillna("").astype(str).str.strip().eq("")
         data.loc[blank_structure, "STRUCTURE"] = source_structure.loc[blank_structure]
         if self.should_generate_so_sitegroup:
-            # DEPARTMENT belongs to each source file; use FILE NAME to assign
-            # its STRUCTURE after the user approves the full regeneration.
+            # Validate always regenerates SO. SITE GROUP is populated later by
+            # the separate Add Site Group action in the desktop workflow.
             data["STRUCTURE"] = source_structure
-            data = self._get_sitegroup(data)
             data = self._getSO(data)
         data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)
