@@ -33,7 +33,7 @@ column_purchase: List[str] = [
 
 column_po_commitment: List[str] = [
     "PROMOTION PLAN", "SO", "GOLD CODE", "LV", "LU",
-    "SITE", "QUANTITY", "SO TYPE", "SUPPLIER"
+    "SITE", "QUANTITY", "SO TYPE"#, "SUPPLIER"
 ]
 
 column_supplier_schedule: List[str] = [

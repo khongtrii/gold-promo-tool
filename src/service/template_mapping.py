@@ -231,6 +231,7 @@ class CheckOAMixin:
 
         template_check_oa = {
             "STRUCTURE" : data['STRUCTURE'],
+            "RAW NETWORK": data["GOLD PROMO NETWORK EXPANDED"],
             column_check_oa[0]: data["GOLD CODE"],
             column_check_oa[1]: data["LV"],
             column_check_oa[2]: data["LU"],
@@ -451,7 +452,7 @@ class POCommitmentMixin(AllocationMixin):
             column_po_commitment[4]: data["LU"],
             column_po_commitment[5]: data["PURCHASE NETWORK EXPANDED"],
             column_po_commitment[7]: "2",
-            column_po_commitment[8]: data["SUPPLIER CODE"],
+            # column_po_commitment[8]: data["SUPPLIER CODE"],
         }
 
         template_po_commitment = pd.DataFrame(template_po_commitment)
@@ -755,10 +756,10 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
 
     def _update(self, path_report_ag) -> "Discount":
         data = self._require_ag_raw().copy()
-        
-        report = pd.read_excel(
-            path_report_ag,
-            dtype=str
+        report_paths = path_report_ag if isinstance(path_report_ag, (list, tuple, set)) else [path_report_ag]
+        report = pd.concat(
+            [pd.read_excel(path, dtype=str) for path in report_paths],
+            ignore_index=True,
         )
 
         group_columns = [

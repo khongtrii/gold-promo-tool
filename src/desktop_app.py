@@ -284,10 +284,10 @@ class SiteGroupReview:
             "structure": "STRUCTURE",
             "network": "GOLD PROMO NETWORK",
             "expanded": "GOLD PROMO NETWORK EXPANDED",
-            "missing": "Missing Count",
-            "missing_detail": "Missing Stores",
-            "extra": "Extra Count",
-            "extra_detail": "Extra Stores",
+            "missing": "Count of store to add",
+            "missing_detail": "Store to Add",
+            "extra": "Count of store to remove",
+            "extra_detail": "Store to Remove",
         }
         widths = {
             "suggested": 140, "members": 300, "structure": 90,
@@ -529,10 +529,28 @@ class GoldPromoApp:
             command=lambda: self._choose_source_files(variable, filetypes),
         ).grid(row=row, column=2, padx=(8, 0), pady=5)
 
+    def _multi_file_row(
+        self, parent: ttk.Frame, row: int, label: str, variable: StringVar,
+        filetypes: list[tuple[str, str]], state: str = "normal",
+    ) -> ttk.Button:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=5)
+        ttk.Entry(parent, textvariable=variable, width=70, state=state).grid(
+            row=row, column=1, sticky="ew", pady=5
+        )
+        button = ttk.Button(
+            parent,
+            text="Browse...",
+            command=lambda: self._choose_source_files(variable, filetypes),
+        )
+        button.grid(row=row, column=2, padx=(8, 0), pady=5)
+        if state == "disabled":
+            button.state(["disabled"])
+        return button
+
     def _build_stage1(self) -> None:
         frame = self.stage1_frame
         frame.columnconfigure(1, weight=1)
-        excel_files = [("Excel files", "*.xlsx *.xlsm"), ("All files", "*.*")]
+        excel_files = [("Excel files", "*.xlsx *.xlsm *.xls"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage1_source, excel_files)
         self._file_row(frame, 1, "Master data file", self.stage1_master_data, excel_files)
         self._directory_row(frame, 2, self.stage1_output)
@@ -571,7 +589,9 @@ class GoldPromoApp:
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 14))
 
-        self.report_button = self._file_row(frame, 8, "AG result report", self.report_ag, excel_files, state="disabled")
+        self.report_button = self._multi_file_row(
+            frame, 8, "AG result report(s)", self.report_ag, excel_files, state="disabled"
+        )
         self.finish_discount_button = ttk.Button(frame, text="Finish Discount Templates", command=self.finish_discount)
         self.finish_discount_button.grid(row=9, column=1, sticky="w", pady=(6, 0))
         self.finish_discount_button.state(["disabled"])
@@ -1031,14 +1051,25 @@ class GoldPromoApp:
     def finish_discount(self) -> None:
         if not self.pending_discounts:
             return
-        paths = self._required_paths(self.report_ag)
+        paths = [
+            Path(value.strip()).expanduser()
+            for value in self.report_ag.get().split(";")
+            if value.strip()
+        ]
+        missing_paths = [str(path) for path in paths if not path.is_file()]
+        if not paths or missing_paths:
+            messagebox.showerror(
+                "Missing AG report",
+                "Select valid AG result report files:\n" + "\n".join(missing_paths),
+            )
+            return
         output = self._output_dir(self.stage1_output)
-        if paths is None or output is None:
+        if output is None:
             return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
             for group_output, pending_discount in self.pending_discounts:
-                discount = pending_discount._update(paths[0])
+                discount = pending_discount._update(paths)
                 if discount.report_err is not None and not discount.report_err.empty:
                     report_err = discount.report_err
                     if "DEPT" in report_err.columns:

@@ -1084,6 +1084,7 @@ class Template_ETL:
         return data
 
     def _check_allocation(self, data) -> Optional[pd.DataFrame]:
+        delivery_columns = ["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]
         site_columns = [
             col for col in data.columns
             if col in self.dict_network.get("store", [])
@@ -1098,6 +1099,28 @@ class Template_ETL:
         ]
 
         data = self._ensure_note_err(data)
+
+        # Accept values such as ``50`` and ``50%``. Blank delivery slots are
+        # treated as zero, so any populated subset must still total 100.
+        delivery_text = data[delivery_columns].fillna("").astype(str).apply(
+            lambda column: column.str.strip().str.replace("%", "", regex=False).str.strip()
+        )
+        delivery_values = delivery_text.apply(pd.to_numeric, errors="coerce")
+        invalid_delivery = delivery_text.ne("") & delivery_values.isna()
+        invalid_rows = invalid_delivery.any(axis=1)
+        self._append_note_err(
+            data,
+            data.index[invalid_rows],
+            "% DELIVERY 1, % DELIVERY 2, and % DELIVERY 3 must contain numeric values.",
+        )
+
+        delivery_total = delivery_values.fillna(0).sum(axis=1)
+        invalid_total = ~invalid_rows & ~delivery_total.round(10).eq(100)
+        self._append_note_err(
+            data,
+            data.index[invalid_total],
+            "Total % DELIVERY 1 + % DELIVERY 2 + % DELIVERY 3 must equal 100.",
+        )
 
         for _, idx in data.groupby(group_keys, dropna=False).groups.items():
             rows = data.loc[idx]
@@ -1117,6 +1140,31 @@ class Template_ETL:
                 ),
                 key=self._sort_key,
             )
+
+            invalid_allocation_sites = []
+            for site in purchase_sites:
+                values = data.loc[idx, site]
+                populated = values.notna() & values.astype(str).str.strip().ne("")
+                if not populated.any():
+                    continue
+                numeric_values = pd.to_numeric(values.loc[populated], errors="coerce")
+                invalid_values = (
+                    numeric_values.isna()
+                    | numeric_values.le(0)
+                    | numeric_values.mod(1).ne(0)
+                )
+                if invalid_values.any():
+                    invalid_allocation_sites.append(site)
+
+            if invalid_allocation_sites:
+                invalid_allocation_sites.sort(key=self._sort_key)
+                self._append_note_err(
+                    data,
+                    idx,
+                    "Allocation values must be integers greater than 0 for Site(s): "
+                    + ", ".join(invalid_allocation_sites)
+                    + ".",
+                )
 
             if not missing_sites:
                 continue
