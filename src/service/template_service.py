@@ -1197,6 +1197,60 @@ class Template_ETL:
                 )
         return data
 
+    def _validate_overlapping_price_or_discount(
+        self,
+        data: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Flag conflicting prices or discounts for each expanded network."""
+        self._ensure_note_err(data)
+        key_columns = [
+            "GOLD CODE",
+            "LV",
+            "LU",
+            "SUPPLIER CODE",
+            "COMMERCIAL CONTRACT",
+        ]
+        value_columns = [
+            "NORMAL PURCHASE PRICE",
+            "DISCOUNT (% OR VALUE)",
+        ]
+
+        comparison = data.loc[
+            :, [*key_columns, "PURCHASE NETWORK EXPANDED", *value_columns]
+        ].copy()
+        comparison["_SOURCE_INDEX"] = data.index
+
+        for column in [*key_columns, *value_columns]:
+            comparison[column] = (
+                comparison[column].fillna("").astype(str).str.strip()
+            )
+
+        comparison["PURCHASE NETWORK EXPANDED"] = comparison[
+            "PURCHASE NETWORK EXPANDED"
+        ].map(self._parse_sites)
+        comparison = comparison.explode("PURCHASE NETWORK EXPANDED")
+        comparison["PURCHASE NETWORK EXPANDED"] = comparison[
+            "PURCHASE NETWORK EXPANDED"
+        ].fillna("").astype(str).str.strip()
+        comparison = comparison[
+            comparison["PURCHASE NETWORK EXPANDED"].ne("")
+        ]
+
+        group_columns = [*key_columns, "PURCHASE NETWORK EXPANDED"]
+        conflicting_indices = set()
+        for _, rows in comparison.groupby(group_columns, dropna=False):
+            if any(rows[column].nunique(dropna=False) > 1 for column in value_columns):
+                conflicting_indices.update(rows["_SOURCE_INDEX"])
+
+        if conflicting_indices:
+            self._append_note_err(
+                data,
+                data.index[data.index.isin(conflicting_indices)],
+                "Overlap Price or Discount",
+            )
+
+        return data
+
     def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
         self._append_note_err(
             data,
@@ -1289,6 +1343,7 @@ class Template_ETL:
         data = self._convert_date(data)
 
         data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(self._contract_checking)
+        data = self._validate_overlapping_price_or_discount(data)
 
         site_columns = [
             col for col in data.columns
