@@ -40,6 +40,20 @@ class Template_ETL:
         (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLEP"),
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
     )
+    CATEGORY_RULES = (
+        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"), "HERO"),
+        (
+            re.compile(
+                r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"
+            ),
+            "CATA",
+        ),
+        (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLE"),
+        (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STAR"),
+    )
+    ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
+    NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi sang float"
+    DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi sang float"
 
     def __init__(
         self,
@@ -166,22 +180,34 @@ class Template_ETL:
 
         return data
 
-    @staticmethod
+    @classmethod
     def _check_required_data(
+        cls,
         data: Optional[pd.DataFrame],
         required: List[str]
     ) -> Optional[pd.DataFrame]:
         if data is None or data.empty:
             return data
 
-        empty_cols = [
-            col
-            for col in required
-            if data[col].replace("", pd.NA).isna().any()
-        ]
+        empty_values = data.loc[:, required].apply(
+            lambda column: column.isna()
+            | column.fillna("").astype(str).str.strip().eq("")
+        )
+        empty_cols = empty_values.columns[empty_values.any()].tolist()
 
         if empty_cols:
-            raise ValueError(f"Required columns contain empty values: {', '.join(empty_cols)}")
+            if "NOTE ERR FROM MASTER DATA" not in data.columns:
+                raise ValueError(
+                    f"Required columns contain empty values: {', '.join(empty_cols)}"
+                )
+
+            for index, row in empty_values.loc[empty_values.any(axis=1)].iterrows():
+                missing = row.index[row].tolist()
+                cls._append_note_err(
+                    data,
+                    pd.Index([index]),
+                    f"Required columns contain empty values: {', '.join(missing)}",
+                )
 
         return data
 
@@ -390,6 +416,54 @@ class Template_ETL:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
             self._check_required_data(data, required_stage1)
+            converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
+            attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
+            for pattern, category in self.CATEGORY_RULES:
+                matched = converted_attribute.isna() & attribute_text.map(
+                    lambda text: bool(pattern.search(text))
+                )
+                converted_attribute.loc[matched] = category
+
+            invalid_attribute = converted_attribute.isna()
+            self._append_note_err(
+                data,
+                data.index[invalid_attribute],
+                self.ATTRIBUTE_MARKETING_ERROR,
+            )
+            data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[
+                ~invalid_attribute
+            ]
+
+            normal_purchase_price = pd.to_numeric(
+                data["NORMAL PURCHASE PRICE"], errors="coerce"
+            )
+            invalid_normal_purchase_price = normal_purchase_price.isna()
+            self._append_note_err(
+                data,
+                data.index[invalid_normal_purchase_price],
+                self.NORMAL_PURCHASE_PRICE_ERROR,
+            )
+            data.loc[
+                ~invalid_normal_purchase_price, "NORMAL PURCHASE PRICE"
+            ] = normal_purchase_price.loc[~invalid_normal_purchase_price].astype(float)
+
+            discount_text = (
+                data["DISCOUNT (% OR VALUE)"].fillna("").astype(str).str.strip()
+            )
+            plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
+            numeric_discount = pd.to_numeric(
+                discount_text.where(plain_discount), errors="coerce"
+            )
+            invalid_discount = plain_discount & numeric_discount.isna()
+            self._append_note_err(
+                data,
+                data.index[invalid_discount],
+                self.DISCOUNT_VALUE_ERROR,
+            )
+            valid_plain_discount = plain_discount & ~invalid_discount
+            data.loc[
+                valid_plain_discount, "DISCOUNT (% OR VALUE)"
+            ] = numeric_discount.loc[valid_plain_discount].astype(float)
             data.columns = [str(col).replace("-RECOMMENDATION QUALITY", "") for col in data.columns]
             data["FILE NAME"] = path.name
             data["_SOURCE_ROW"] = data.index + 8
