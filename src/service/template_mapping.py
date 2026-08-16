@@ -162,7 +162,7 @@ class AttributeMapMixin:
 
     CATEGORY_RULES: Optional[List] = [
         (
-            re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"),
+            re.compile(r"(?i)\b(hero|front\s*page|back\s*page|unbeat)\b"),
             "HERO",
         ),
         (

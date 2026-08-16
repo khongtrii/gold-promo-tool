@@ -41,7 +41,7 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
     )
     CATEGORY_RULES = (
-        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"), "HERO"),
+        (re.compile(r"(?i)\b(hero|front\s*page|back\s*page|unbeat)\b"), "HERO"),
         (
             re.compile(
                 r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"
@@ -52,8 +52,8 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STAR"),
     )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
-    NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi sang float"
-    DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi sang float"
+    NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
+    DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
 
     def __init__(
         self,
@@ -198,7 +198,7 @@ class Template_ETL:
         if empty_cols:
             if "NOTE ERR FROM MASTER DATA" not in data.columns:
                 raise ValueError(
-                    f"Required columns contain empty values: {', '.join(empty_cols)}"
+                    f"Các cột bắt buộc đang để trống: {', '.join(empty_cols)}"
                 )
 
             for index, row in empty_values.loc[empty_values.any(axis=1)].iterrows():
@@ -206,7 +206,7 @@ class Template_ETL:
                 cls._append_note_err(
                     data,
                     pd.Index([index]),
-                    f"Required columns contain empty values: {', '.join(missing)}",
+                    f"Các cột bắt buộc đang để trống: {', '.join(missing)}",
                 )
 
         return data
@@ -231,6 +231,26 @@ class Template_ETL:
             + data.loc[idx, "NOTE ERR FROM MASTER DATA"].ne("").map({True: " | ", False: ""})
             + message
         )
+
+    @staticmethod
+    def _normalize_decimal_number(value) -> str:
+        """Normalize decimal separators used by different regional formats."""
+        if pd.isna(value):
+            return ""
+
+        text = str(value).strip().replace("\u00a0", "").replace(" ", "")
+        comma_position = text.rfind(",")
+        dot_position = text.rfind(".")
+
+        if comma_position >= 0 and dot_position >= 0:
+            if comma_position > dot_position:
+                return text.replace(".", "").replace(",", ".")
+            return text.replace(",", "")
+
+        if comma_position >= 0:
+            return text.replace(",", ".")
+
+        return text
 
     def _unique_sorted_sites(self, value) -> tuple:
         return tuple(sorted(set(self._parse_sites(value)), key=self._sort_key))
@@ -349,9 +369,9 @@ class Template_ETL:
         # data.columns = [str(column).strip() for column in data.columns]
         # self._check_required_columns(data, list(self.ATTRIBUTE_COLUMNS))
         data = data.loc[:, self.ATTRIBUTE_COLUMNS].dropna(how="all").copy()
+        data = self._ensure_note_err(data)
         self._check_required_data(data, list(self.ATTRIBUTE_COLUMNS))
         data["_SOURCE_ROW"] = data.index + header_row + 2
-        data = self._ensure_note_err(data)
 
         def attribute_class(value) -> str:
             text = "" if pd.isna(value) else str(value).strip()
@@ -385,7 +405,7 @@ class Template_ETL:
         self._append_note_err(
             data,
             data.index[data["START DATE"].isna() | data["END DATE"].isna()],
-            "START DATE and END DATE must be valid dates.",
+            "START DATE và END DATE phải là ngày hợp lệ.",
         )
         self._append_note_err(
             data,
@@ -394,7 +414,7 @@ class Template_ETL:
                 & data["END DATE"].notna()
                 & data["START DATE"].gt(data["END DATE"])
             ],
-            "START DATE must be less than or equal to END DATE.",
+            "START DATE phải nhỏ hơn hoặc bằng END DATE.",
         )
         data["START DATE"] = data["START DATE"].dt.strftime("%d/%m/%Y")
         data["END DATE"] = data["END DATE"].dt.strftime("%d/%m/%Y")
@@ -434,8 +454,11 @@ class Template_ETL:
                 ~invalid_attribute
             ]
 
+            normalized_purchase_price = data["NORMAL PURCHASE PRICE"].map(
+                self._normalize_decimal_number
+            )
             normal_purchase_price = pd.to_numeric(
-                data["NORMAL PURCHASE PRICE"], errors="coerce"
+                normalized_purchase_price, errors="coerce"
             )
             invalid_normal_purchase_price = normal_purchase_price.isna()
             self._append_note_err(
@@ -443,9 +466,7 @@ class Template_ETL:
                 data.index[invalid_normal_purchase_price],
                 self.NORMAL_PURCHASE_PRICE_ERROR,
             )
-            data.loc[
-                ~invalid_normal_purchase_price, "NORMAL PURCHASE PRICE"
-            ] = normal_purchase_price.loc[~invalid_normal_purchase_price].astype(float)
+            data["NORMAL PURCHASE PRICE"] = normal_purchase_price.astype(float)
 
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"].fillna("").astype(str).str.strip()
@@ -461,6 +482,9 @@ class Template_ETL:
                 self.DISCOUNT_VALUE_ERROR,
             )
             valid_plain_discount = plain_discount & ~invalid_discount
+            data["DISCOUNT (% OR VALUE)"] = data[
+                "DISCOUNT (% OR VALUE)"
+            ].astype(object)
             data.loc[
                 valid_plain_discount, "DISCOUNT (% OR VALUE)"
             ] = numeric_discount.loc[valid_plain_discount].astype(float)
@@ -586,7 +610,9 @@ class Template_ETL:
         
         plan[date_columns_plan] = plan[date_columns_plan].apply(
             pd.to_datetime,
-            errors="coerce"
+            errors="coerce",
+            dayfirst=True,
+            format="mixed",
         )
 
         plan["SHOP ACTIVATION"] = (
@@ -629,19 +655,24 @@ class Template_ETL:
 
         network_dict = network_dict or {}
 
-        result = []
-
-        for token in value.split(";"):
+        def expand_token(token: str, parents: frozenset[str]) -> list[str]:
             token = token.strip()
-
             if not token:
-                continue
-            if token in network_dict:
-                mapped = network_dict[token]
-                mapped = "" if mapped is None else str(mapped)
-                result.extend([s.strip() for s in mapped.split(";") if s.strip()])
-            else:
-                result.append(token)
+                return []
+            if token not in network_dict or token in parents:
+                return [token]
+
+            mapped = network_dict[token]
+            mapped_tokens = "" if mapped is None else str(mapped)
+            next_parents = parents | {token}
+            expanded = []
+            for mapped_token in mapped_tokens.split(";"):
+                expanded.extend(expand_token(mapped_token, next_parents))
+            return expanded
+
+        result = []
+        for token in value.split(";"):
+            result.extend(expand_token(token, frozenset()))
 
         return result
 
@@ -653,6 +684,32 @@ class Template_ETL:
 
         if expression == "":
             return ""
+
+        # Evaluate each top-level network independently. Semicolons inside
+        # parentheses belong to that network's adjustment expression.
+        components = []
+        start = 0
+        depth = 0
+        for position, character in enumerate(expression):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth = max(0, depth - 1)
+            elif character == ";" and depth == 0:
+                components.append(expression[start:position])
+                start = position + 1
+        components.append(expression[start:])
+        components = [component for component in components if component]
+
+        if len(components) > 1:
+            result = []
+            seen = set()
+            for component in components:
+                for site in self._parse_sites(self._extract_network(component)):
+                    if site not in seen:
+                        seen.add(site)
+                        result.append(site)
+            return ";".join(result)
 
         # Support a base network with adjustments in parentheses followed by
         # standalone stores, e.g. ``8230(-132;135);112``.  Stores after the
@@ -785,7 +842,7 @@ class Template_ETL:
                 invalid_sorted = sorted(invalid_sites, key=self._sort_key)
                 messages.append(
                     "Cửa hàng " + ";".join(invalid_sorted)
-                    + " không tồn tại trong list SITE_STORE hiện tại"
+                    + " không tồn tại trong danh sách SITE_STORE hiện tại"
                 )
 
             promo_variants = {
@@ -793,7 +850,7 @@ class Template_ETL:
                 for value in rows["GOLD PROMO NETWORK EXPANDED"]
             }
             if len(promo_variants) > 1:
-                messages.append("Check lại GOLD PROMO NETWORK")
+                messages.append("Vui lòng kiểm tra lại GOLD PROMO NETWORK")
 
             self._append_note_err(data, idx, " | ".join(messages))
 
@@ -823,7 +880,7 @@ class Template_ETL:
                 )
 
                 if dup:
-                    messages.append("Duplicate Purchase Network: " + ";".join(dup))
+                    messages.append("PURCHASE NETWORK bị trùng lặp: " + ";".join(dup))
 
             purchase = set().union(*purchase_lists) if purchase_lists else set()
 
@@ -835,9 +892,9 @@ class Template_ETL:
             extra = sorted(purchase - promo, key=self._sort_key)
 
             if missing:
-                messages.append("Missing: " + ";".join(missing))
+                messages.append("Thiếu cửa hàng trong PURCHASE NETWORK: " + ";".join(missing))
             if extra:
-                messages.append("Extra: " + ";".join(extra))
+                messages.append("Dư cửa hàng trong PURCHASE NETWORK: " + ";".join(extra))
 
             self._append_note_err(data, idx, " | ".join(messages))
 
@@ -1185,7 +1242,7 @@ class Template_ETL:
         self._append_note_err(
             data,
             data.index[invalid_rows],
-            "% DELIVERY 1, % DELIVERY 2, and % DELIVERY 3 must contain numeric values.",
+            "% DELIVERY 1, % DELIVERY 2 và % DELIVERY 3 phải là số.",
         )
 
         delivery_total = delivery_values.fillna(0).sum(axis=1)
@@ -1193,7 +1250,7 @@ class Template_ETL:
         self._append_note_err(
             data,
             data.index[invalid_total],
-            "Total % DELIVERY 1 + % DELIVERY 2 + % DELIVERY 3 must equal 100.",
+            "Tổng % DELIVERY 1 + % DELIVERY 2 + % DELIVERY 3 phải bằng 100.",
         )
 
         for _, idx in data.groupby(group_keys, dropna=False).groups.items():
@@ -1244,7 +1301,7 @@ class Template_ETL:
                 continue
 
             message = (
-                f"Thiếu phân bổ đổi với các Site(s): {', '.join(missing_sites)} "
+                f"Thiếu phân bổ đối với các cửa hàng: {', '.join(missing_sites)} "
                 "dựa trên PURCHASE NETWORK EXPANDED."
             )
 
@@ -1320,7 +1377,7 @@ class Template_ETL:
             self._append_note_err(
                 data,
                 data.index[data.index.isin(conflicting_indices)],
-                "Overlap Price or Discount",
+                "Giá mua hoặc chiết khấu bị chồng chéo",
             )
 
         return data
@@ -1394,7 +1451,7 @@ class Template_ETL:
         self._append_note_err(
             data,
             data.index[mask_err],
-            "PP START DATE must be less than or equal to PP END DATE."
+            "PP START DATE phải nhỏ hơn hoặc bằng PP END DATE."
         )
 
         return data
@@ -1514,7 +1571,7 @@ class Template_ETL:
             self._append_note_err(
                 data,
                 data.index[mask_err],
-                "SP START DATE must be less than or equal to SP END DATE."
+                "SP START DATE phải nhỏ hơn hoặc bằng SP END DATE."
             )
         
             return data
