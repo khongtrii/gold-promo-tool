@@ -162,7 +162,7 @@ class AttributeMapMixin:
 
     CATEGORY_RULES: Optional[List] = [
         (
-            re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"),
+            re.compile(r"(?i)\b(hero|front\s*page|back\s*page|unbeat)\b"),
             "HERO",
         ),
         (
@@ -870,15 +870,13 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
 
             template_dc_free[column_dc[20]] = (
                 template_dc_free[column_dc[20]]
-                .str.replace("TH", "", regex=False)
-                .str.replace("T", "", regex=False)
+                .str.replace(r"th|t", "", case=False, regex=True)
                 .str.strip()
             )
             
             template_dc_free[column_dc[22]] = (
                 template_dc_free[column_dc[22]]
-                .str.replace("TH", "", regex=False)
-                .str.replace("T", "", regex=False)
+                .str.replace(r"th|t", "", case=False, regex=True)
                 .str.strip()
             )
     
