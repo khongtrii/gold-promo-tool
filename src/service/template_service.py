@@ -682,7 +682,7 @@ class Template_ETL:
 
         return result
 
-    def _extract_network(self, expression: str) -> str:
+    def _extract_network(self, expression: str, deduplicate: bool = True) -> str:
         if pd.isna(expression) or expression is None:
             return ""
 
@@ -711,8 +711,10 @@ class Template_ETL:
             result = []
             seen = set()
             for component in components:
-                for site in self._parse_sites(self._extract_network(component)):
-                    if site not in seen:
+                for site in self._parse_sites(
+                    self._extract_network(component, deduplicate=deduplicate)
+                ):
+                    if not deduplicate or site not in seen:
                         seen.add(site)
                         result.append(site)
             return ";".join(result)
@@ -754,7 +756,7 @@ class Template_ETL:
             seen = set()
 
             for site in self._expand(expression, self.dict_network.get("network")):
-                if site not in seen:
+                if not deduplicate or site not in seen:
                     seen.add(site)
                     result.append(site)
 
@@ -767,7 +769,7 @@ class Template_ETL:
         seen = set()
 
         for site in self._expand(base_token, self.dict_network.get("network")):
-            if site not in seen:
+            if not deduplicate or site not in seen:
                 seen.add(site)
                 result.append(site)
 
@@ -780,7 +782,7 @@ class Template_ETL:
 
             if op == "+":
                 for s in sites:
-                    if s not in seen:
+                    if not deduplicate or s not in seen:
                         seen.add(s)
                         result.append(s)
             else:
@@ -864,6 +866,27 @@ class Template_ETL:
 
     def _ppNetwork_gpNetwork(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
+
+        for _, related_indices in data.groupby(
+            ["GOLD CODE", "LV"], dropna=False
+        ).groups.items():
+            duplicates = set()
+            for value in data.loc[related_indices, "PURCHASE NETWORK"]:
+                expanded_with_duplicates = self._parse_sites(
+                    self._extract_network(value, deduplicate=False)
+                )
+                counts = Counter(expanded_with_duplicates)
+                duplicates.update(
+                    site for site, count in counts.items() if count > 1
+                )
+            if duplicates:
+                sorted_duplicates = sorted(duplicates, key=self._sort_key)
+                self._append_note_err(
+                    data,
+                    pd.Index(related_indices),
+                    "PURCHASE NETWORK bị trùng lặp: "
+                    + ";".join(sorted_duplicates),
+                )
 
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
@@ -1343,9 +1366,6 @@ class Template_ETL:
         key_columns = [
             "GOLD CODE",
             "LV",
-            "LU",
-            "SUPPLIER CODE",
-            "COMMERCIAL CONTRACT",
         ]
         value_columns = [
             "NORMAL PURCHASE PRICE",
@@ -1388,10 +1408,41 @@ class Template_ETL:
 
         return data
 
-    def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
+    def _validate_duplicate_purchase_information(
+        self,
+        data: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Flag rows with identical purchase and discount information."""
+        self._ensure_note_err(data)
+        duplicate_columns = [
+            "GOLD CODE",
+            "LV",
+            "LU",
+            "SUPPLIER CODE",
+            "COMMERCIAL CONTRACT",
+            "PURCHASE NETWORK",
+            "NORMAL PURCHASE PRICE",
+            "DISCOUNT (% OR VALUE)",
+        ]
+        normalized = data.loc[:, duplicate_columns].fillna("").astype(str).apply(
+            lambda column: column.str.strip()
+        )
+        duplicate_rows = normalized.duplicated(
+            subset=duplicate_columns,
+            keep=False,
+        )
         self._append_note_err(
             data,
-            data.index[~data["LU"].astype(str).isin(["1", "41"])],
+            data.index[duplicate_rows],
+            "Thông tin mua hàng và chiết khấu bị trùng.",
+        )
+        return data
+
+    def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
+        lu_values = data["LU"].fillna("").astype(str).str.strip()
+        self._append_note_err(
+            data,
+            data.index[~lu_values.isin(["1", "41"])],
             "LU chỉ được phép là 1 hoặc 41."
         )
 
@@ -1475,10 +1526,12 @@ class Template_ETL:
             # the separate Add Site Group action in the desktop workflow.
             data["STRUCTURE"] = source_structure
             data = self._getSO(data)
+        data = self._field_validator(data)
         data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)
         data = self._convert_date(data)
 
+        data = self._validate_duplicate_purchase_information(data)
         data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(self._contract_checking)
         data = self._validate_overlapping_price_or_discount(data)
 
