@@ -1213,6 +1213,7 @@ class GoldPromoApp:
                     discount.template_ag, self._output_file(group_output, "template_ag", timestamp)
                 )
                 pending_discounts.append((group_output, discount))
+            self._record_used_sitegroups(etl)
             self.pending_discounts = pending_discounts
             self.report_button.state(["!disabled"])
             self.finish_discount_button.state(["!disabled"])

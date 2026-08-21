@@ -53,8 +53,6 @@ class Template_ETL:
     )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
     ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
-    ATTRIBUTE_START_DATE_ERROR = "START DATE không khớp CATALOGUE START DATE"
-    ATTRIBUTE_END_DATE_ERROR = "END DATE không khớp CATALOGUE END DATE"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
 
@@ -373,7 +371,12 @@ class Template_ETL:
         # self._check_required_columns(data, list(self.ATTRIBUTE_COLUMNS))
         data = data.loc[:, self.ATTRIBUTE_COLUMNS].dropna(how="all").copy()
         data = self._ensure_note_err(data)
-        self._check_required_data(data, list(self.ATTRIBUTE_COLUMNS))
+        required_attribute_data = [
+            column
+            for column in self.ATTRIBUTE_COLUMNS
+            if column not in {"START DATE", "END DATE"}
+        ]
+        self._check_required_data(data, required_attribute_data)
         data["_SOURCE_ROW"] = data.index + header_row + 2
 
         def attribute_class(value) -> str | None:
@@ -398,17 +401,6 @@ class Template_ETL:
             + data["REGION (NORTH/SOUTH/CENTER/ALL)"].astype(str).str.strip()
         )
 
-        data["START DATE"] = pd.to_datetime(
-            data["START DATE"],
-            errors="coerce",
-            dayfirst=True,
-        )
-        data["END DATE"] = pd.to_datetime(
-            data["END DATE"],
-            errors="coerce",
-            dayfirst=True,
-        )
-
         if self.plan is None or self.plan.empty:
             raise ValueError(f"Không tìm thấy CATALOGUE {self.cata} trong Master data.")
 
@@ -427,39 +419,8 @@ class Template_ETL:
                 f"CATALOGUE {self.cata} có START DATE hoặc END DATE không hợp lệ trong Master data."
             )
 
-        self._append_note_err(
-            data,
-            data.index[
-                data["START DATE"].notna()
-                & data["START DATE"].ne(catalogue_start_date)
-            ],
-            f"{self.ATTRIBUTE_START_DATE_ERROR} ({catalogue_start_date:%d/%m/%Y}).",
-        )
-        self._append_note_err(
-            data,
-            data.index[
-                data["END DATE"].notna()
-                & data["END DATE"].ne(catalogue_end_date)
-            ],
-            f"{self.ATTRIBUTE_END_DATE_ERROR} ({catalogue_end_date:%d/%m/%Y}).",
-        )
-
-        today = pd.Timestamp.today().normalize()
-        data.loc[data["START DATE"].notna() & data["START DATE"].le(today), "START DATE"] = today + pd.Timedelta(days=1)
-        self._append_note_err(
-            data,
-            data.index[data["START DATE"].isna() | data["END DATE"].isna()],
-            "START DATE và END DATE phải là ngày hợp lệ.",
-        )
-        self._append_note_err(
-            data,
-            data.index[
-                data["START DATE"].notna()
-                & data["END DATE"].notna()
-                & data["START DATE"].gt(data["END DATE"])
-            ],
-            "START DATE phải nhỏ hơn hoặc bằng END DATE.",
-        )
+        data["START DATE"] = catalogue_start_date
+        data["END DATE"] = catalogue_end_date
         data["START DATE"] = data["START DATE"].dt.strftime("%d/%m/%Y")
         data["END DATE"] = data["END DATE"].dt.strftime("%d/%m/%Y")
 
@@ -866,6 +827,67 @@ class Template_ETL:
         text = re.sub(f"{re.escape(replacement)}+", replacement, text)
         return text
 
+    @staticmethod
+    def _has_valid_network_rule(expression) -> bool:
+        """Return whether an expression follows the supported SITE RULE syntax."""
+        if pd.isna(expression):
+            return False
+
+        expression = str(expression).strip().replace(" ", "")
+        if not expression:
+            return False
+
+        components = []
+        start = 0
+        depth = 0
+        for position, character in enumerate(expression):
+            if character == "(":
+                depth += 1
+                if depth > 1:
+                    return False
+            elif character == ")":
+                depth -= 1
+                if depth < 0:
+                    return False
+            elif character == ";" and depth == 0:
+                component = expression[start:position]
+                if not component:
+                    return False
+                components.append(component)
+                start = position + 1
+        if depth != 0 or start == len(expression):
+            return False
+        components.append(expression[start:])
+
+        token = r"[A-Za-z0-9]+"
+        token_list = rf"{token}(?:;{token})*"
+        standard = re.compile(rf"{token}(?:[+-](?:{token}|\({token_list}\)))+")
+        plain = re.compile(rf"{token}|\({token_list}\)")
+        compact = re.compile(rf"({token})\((.+)\)")
+
+        for component in components:
+            if plain.fullmatch(component) or standard.fullmatch(component):
+                continue
+
+            match = compact.fullmatch(component)
+            if match is None:
+                return False
+            inside = match.group(2)
+            adjustments = re.findall(r"[+-][^+-]+", inside)
+            if not adjustments or "".join(adjustments) != inside:
+                return False
+            for index, adjustment in enumerate(adjustments):
+                raw_values = adjustment[1:]
+                if raw_values.startswith(";") or (
+                    raw_values.endswith(";") and index == len(adjustments) - 1
+                ):
+                    return False
+                values = raw_values.rstrip(";")
+                if not values or re.fullmatch(token_list, values) is None:
+                    return False
+
+        return True
+
     def _check_network(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
 
@@ -880,6 +902,28 @@ class Template_ETL:
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
 
+            messages = []
+            for source_column, expanded_column in (
+                ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"),
+                ("GOLD PROMO NETWORK", "GOLD PROMO NETWORK EXPANDED"),
+            ):
+                valid_rule = rows[source_column].map(self._has_valid_network_rule)
+                if (~valid_rule).any():
+                    messages.append(f"{source_column} không đúng SITE RULE.")
+
+                has_adjustment = rows[source_column].astype(str).str.contains(
+                    r"[+-]", regex=True, na=False
+                )
+                empty_after_expand = (
+                    valid_rule
+                    & has_adjustment
+                    & rows[expanded_column].fillna("").astype(str).str.strip().eq("")
+                )
+                if empty_after_expand.any():
+                    messages.append(
+                        f"{source_column} sau khi expand +/- bị rỗng, vui lòng kiểm tra lại."
+                    )
+
             invalid_sites = set()
             for col in ["PURCHASE NETWORK EXPANDED", "GOLD PROMO NETWORK EXPANDED"]:
                 for value in rows[col]:
@@ -887,8 +931,6 @@ class Template_ETL:
                         site for site in self._parse_sites(value)
                         if site not in valid_stores
                     )
-
-            messages = []
 
             if invalid_sites:
                 invalid_sorted = sorted(invalid_sites, key=self._sort_key)
