@@ -77,5 +77,5 @@ column_sale: List[str] = [
 ]
 
 column_attr: List[str] = [
-    'ACTION','GOLD CODE','SV','CLASS','CODE','ALPHANUM','NUM_VALUE','DATE','TIME','START DATE','END DATE'
+    'ACTION','GOLD CODE','SV','CLASS','CODE','ALPHANUM','NUM_VALUE','DATE','TIME','START DATE','END DATE','NOTE COUNT'
 ]

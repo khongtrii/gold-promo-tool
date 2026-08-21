@@ -35,7 +35,7 @@ class Template_ETL:
         "POSITION",
     )
     ATTRIBUTE_CLASS_RULES = (
-        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"), "HEROP"),
+        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat|hero)\b"), "HEROP"),
         (re.compile(r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"), "CATAP"),
         (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLEP"),
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
@@ -52,6 +52,9 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STAR"),
     )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
+    ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
+    ATTRIBUTE_START_DATE_ERROR = "START DATE không khớp CATALOGUE START DATE"
+    ATTRIBUTE_END_DATE_ERROR = "END DATE không khớp CATALOGUE END DATE"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
 
@@ -373,14 +376,20 @@ class Template_ETL:
         self._check_required_data(data, list(self.ATTRIBUTE_COLUMNS))
         data["_SOURCE_ROW"] = data.index + header_row + 2
 
-        def attribute_class(value) -> str:
+        def attribute_class(value) -> str | None:
             text = "" if pd.isna(value) else str(value).strip()
             for pattern, attribute in self.ATTRIBUTE_CLASS_RULES:
                 if pattern.search(text):
                     return attribute
-            return text
+            return None
 
         data["CLASS"] = data["POSITION"].map(attribute_class)
+        invalid_class = data["CLASS"].isna()
+        self._append_note_err(
+            data,
+            data.index[invalid_class],
+            self.ATTRIBUTE_CLASS_ERROR,
+        )
         data["Alphanum"] = (
             data["POSITION"].astype(str).str.strip()
             + ".P."
@@ -398,6 +407,41 @@ class Template_ETL:
             data["END DATE"],
             errors="coerce",
             dayfirst=True,
+        )
+
+        if self.plan is None or self.plan.empty:
+            raise ValueError(f"Không tìm thấy CATALOGUE {self.cata} trong Master data.")
+
+        catalogue_start_date = pd.to_datetime(
+            self.plan["CATALOGUE START DATE"].iat[0],
+            errors="coerce",
+            dayfirst=True,
+        )
+        catalogue_end_date = pd.to_datetime(
+            self.plan["CATALOGUE END DATE"].iat[0],
+            errors="coerce",
+            dayfirst=True,
+        )
+        if pd.isna(catalogue_start_date) or pd.isna(catalogue_end_date):
+            raise ValueError(
+                f"CATALOGUE {self.cata} có START DATE hoặc END DATE không hợp lệ trong Master data."
+            )
+
+        self._append_note_err(
+            data,
+            data.index[
+                data["START DATE"].notna()
+                & data["START DATE"].ne(catalogue_start_date)
+            ],
+            f"{self.ATTRIBUTE_START_DATE_ERROR} ({catalogue_start_date:%d/%m/%Y}).",
+        )
+        self._append_note_err(
+            data,
+            data.index[
+                data["END DATE"].notna()
+                & data["END DATE"].ne(catalogue_end_date)
+            ],
+            f"{self.ATTRIBUTE_END_DATE_ERROR} ({catalogue_end_date:%d/%m/%Y}).",
         )
 
         today = pd.Timestamp.today().normalize()

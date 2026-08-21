@@ -490,6 +490,9 @@ class GoldPromoApp:
         self.report_ag = StringVar()
 
         self.stage2_source = StringVar()
+        self.stage2_master_data = StringVar(
+            value=default_master_data_path()
+        )
         self.stage2_attribute = StringVar()
         self.stage2_output = StringVar(value=str(Path.cwd() / "output"))
         self.pending_discounts: list[tuple[Path, Discount]] = []
@@ -788,12 +791,13 @@ class GoldPromoApp:
         frame.columnconfigure(1, weight=1)
         excel_files = [("Excel files", "*.xlsx *.xlsm"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage2_source, excel_files)
-        self._file_row(frame, 1, "Attribute file", self.stage2_attribute, excel_files)
-        self._directory_row(frame, 2, self.stage2_output)
-        ttk.Separator(frame).grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Button(frame, text="Run Stage 2", command=self.run_stage2).grid(row=4, column=1, sticky="w")
+        self._file_row(frame, 1, "Master data file", self.stage2_master_data, excel_files)
+        self._file_row(frame, 2, "Attribute file", self.stage2_attribute, excel_files)
+        self._directory_row(frame, 3, self.stage2_output)
+        ttk.Separator(frame).grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
+        ttk.Button(frame, text="Run Stage 2", command=self.run_stage2).grid(row=5, column=1, sticky="w")
         self.stage2_status = ttk.Label(frame, text="Select a Gold Promo source, an Attribute file, or both.")
-        self.stage2_status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.stage2_status.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
     @staticmethod
     def _required_paths(*variables: StringVar) -> list[Path] | None:
@@ -1302,6 +1306,10 @@ class GoldPromoApp:
         if not any(selected_files.values()):
             messagebox.showerror("Missing input", "Select a Gold Promo source, an Attribute file, or both.")
             return
+        master_paths = self._required_paths(self.stage2_master_data)
+        if master_paths is None:
+            return
+        master_data = master_paths[0]
         invalid_files = [
             f"Attribute file: {selected_files['Attribute file']}"
             if selected_files["Attribute file"] and not Path(selected_files["Attribute file"]).expanduser().is_file()
@@ -1330,7 +1338,7 @@ class GoldPromoApp:
 
         if sources:
             try:
-                source_etl = Template_ETL(sources)
+                source_etl = Template_ETL(sources, master_data, master_data)
                 source_etl._load_src_listoff()._pipeline2()._load_network()
                 if not self._return_errors(sources, source_etl.src_listoff, output, "stage2", timestamp):
                     for (structure, file_name), data in source_etl.src_listoff.groupby(
@@ -1350,10 +1358,11 @@ class GoldPromoApp:
             try:
                 attribute_etl = source_etl or Template_ETL(None)
                 attribute_etl.path_attribute = attribute
+                attribute_etl.path_plan = master_data
                 if not attribute_etl.cata:
                     catalogue = re.search(r"(?i)C\d+", attribute.stem)
                     attribute_etl.cata = catalogue.group(0).upper() if catalogue else ""
-                attribute_etl._load_attribute(attribute_sheet)
+                attribute_etl._load_plan()._load_attribute(attribute_sheet)
                 if not self._return_attribute_errors(attribute_etl, output, timestamp):
                     sale_price = SalePrice(attribute_etl)._create_attr()
                     WorkbookExporter.write_template(
