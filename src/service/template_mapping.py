@@ -503,7 +503,17 @@ class SupplierScheduleMixin(CalendarMixin):
             column_supplier_schedule[10]: "1",
             column_supplier_schedule[11]: "1",
             column_supplier_schedule[12]: "",
-            "%DELI": data[["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]].values.tolist(),
+            "%DELI": data[["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]]
+            .apply(
+                lambda column: column.map(
+                    lambda value: (
+                        value
+                        if pd.isna(value)
+                        else str(value).strip().replace("%", "").strip()
+                    )
+                )
+            )
+            .values.tolist(),
             "DELIVERY TYPE": data["DELIVERY TYPE"],
         }
 

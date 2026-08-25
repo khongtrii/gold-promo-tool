@@ -13,7 +13,7 @@ import sys
 from copy import copy
 from datetime import datetime
 from pathlib import Path
-from tkinter import Listbox, Tk, StringVar, Toplevel, filedialog, messagebox, ttk
+from tkinter import BooleanVar, Listbox, Tk, StringVar, Toplevel, filedialog, messagebox, ttk
 
 import pandas as pd
 import win32com.client as win32
@@ -47,6 +47,18 @@ TEMPLATE_EXPORTS = (
     ("supplier_schedule", "template_supplier_schedule"),
     ("add_attribute_marketing", "template_add_attribute_marketing"),
 )
+
+TEMPLATE_EXPORT_LABELS = {
+    "promotion_plan": "Promotion Plan",
+    "update_so": "Update SO",
+    "missing_ou": "Missing OU",
+    "so_calendar": "SO Calendar",
+    "purchase": "Purchase",
+    "po_commitment": "PO Commitment",
+    "supplier_schedule": "Supplier Schedule",
+    "add_attribute_marketing": "Add Attribute Marketing",
+    "template_ag": "Template AG",
+}
 
 
 class WorkbookExporter:
@@ -912,6 +924,17 @@ class GoldPromoApp:
             paths.append(path)
         return paths
 
+    @staticmethod
+    def _export_gold_promo_network_report(
+        etl: Template_ETL, output: Path, timestamp: str
+    ) -> Path:
+        """Write the additional Stage 1 SO/site count report."""
+        file_name = str(etl.src["FILE NAME"].iat[0])
+        path = output / f"{Path(file_name).stem}_SO_GP_REPORT_{timestamp}.xlsx"
+        report = etl.build_gold_promo_network_report()
+        report.to_excel(path, index=False, sheet_name="SO SITE Report")
+        return path
+
     def run_stage1(self) -> None:
         sources = self._source_paths(self.stage1_source)
         paths = self._required_paths(self.stage1_master_data)
@@ -953,15 +976,21 @@ class GoldPromoApp:
     def _complete_stage1_pipeline(self, etl: Template_ETL, output: Path, timestamp: str) -> None:
         try:
             self._export_non_warehouse(etl, output, timestamp)
+            report_paths = [
+                self._export_gold_promo_network_report(grouped_etl, group_output, timestamp)
+                for group_output, grouped_etl in self._stage1_groups(etl, output)
+            ]
             self.pending_etl = etl
             self.check_oa_button.state(["!disabled"])
             self.export_src_button.state(["!disabled"])
             self.stage1_status.config(
-                text="Validation and Get SO complete. You can export the processed src or create Check OA next."
+                text=f"Validation and Get SO complete. Created {len(report_paths)} network report(s)."
             )
             messagebox.showinfo(
                 "Pipeline complete",
-                "Validation and Get SO are complete. You can export STRUCTURE + SO now, or create Check OA next.",
+                "Validation and Get SO are complete.\n"
+                f"Created {len(report_paths)} network report(s) in the source output folder(s).\n\n"
+                "You can export STRUCTURE + SO now, or create Check OA next.",
             )
         except Exception as error:
             self.stage1_status.config(text="Stage 1 pipeline failed.")
@@ -1154,6 +1183,79 @@ class GoldPromoApp:
         self.root.wait_window(dialog)
         return result
 
+    def _request_template_exports(self) -> set[str] | None:
+        """Let the user choose which configuration templates to create."""
+        template_names = [method_name for method_name, _attribute in TEMPLATE_EXPORTS]
+        template_names.append("template_ag")
+
+        dialog = Toplevel(self.root)
+        dialog.title("Select templates")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        result: set[str] | None = None
+        selections = {
+            name: BooleanVar(master=dialog, value=True)
+            for name in template_names
+        }
+
+        ttk.Label(dialog, text="Select the templates to create:").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 8)
+        )
+        for index, name in enumerate(template_names):
+            row = index // 2 + 1
+            column = index % 2
+            ttk.Checkbutton(
+                dialog,
+                text=TEMPLATE_EXPORT_LABELS[name],
+                variable=selections[name],
+            ).grid(row=row, column=column, sticky="w", padx=12, pady=4)
+
+        controls_row = (len(template_names) + 1) // 2 + 1
+        selection_frame = ttk.Frame(dialog)
+        selection_frame.grid(
+            row=controls_row, column=0, sticky="w", padx=12, pady=(10, 12)
+        )
+
+        def set_all(selected: bool) -> None:
+            for variable in selections.values():
+                variable.set(selected)
+
+        ttk.Button(
+            selection_frame,
+            text="Select All",
+            command=lambda: set_all(True),
+        ).pack(side="left")
+        ttk.Button(
+            selection_frame,
+            text="Clear All",
+            command=lambda: set_all(False),
+        ).pack(side="left", padx=(6, 0))
+
+        def submit() -> None:
+            nonlocal result
+            result = {name for name, variable in selections.items() if variable.get()}
+            if not result:
+                messagebox.showerror(
+                    "No templates selected",
+                    "Select at least one template to create.",
+                    parent=dialog,
+                )
+                result = None
+                return
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(
+            row=controls_row, column=1, sticky="e", padx=12, pady=(10, 12)
+        )
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(button_frame, text="Create", command=submit).pack(side="right", padx=(0, 6))
+        dialog.bind("<Return>", lambda _event: submit())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        self.root.wait_window(dialog)
+        return result
+
     def create_template_mapping(self) -> None:
         """Create templates from memory or directly from a completed processed source."""
         etl = self.pending_etl
@@ -1191,34 +1293,70 @@ class GoldPromoApp:
             if missing_columns:
                 self._show_incomplete_template_source(missing_columns)
                 return
-            usernames = self._request_ag_usernames(etl)
-            if usernames is None:
+            selected_templates = self._request_template_exports()
+            if selected_templates is None:
                 self.stage1_status.config(text="Create Other Templates cancelled.")
                 return
+            create_template_ag = "template_ag" in selected_templates
+            usernames = self._request_ag_usernames(etl) if create_template_ag else None
+            if create_template_ag and usernames is None:
+                self.stage1_status.config(text="Create Other Templates cancelled.")
+                return
+
+            # Never let a later Finish Discount action reuse AG state from an
+            # earlier template-creation run.
+            self.pending_discounts = []
+            self.report_button.state(["disabled"])
+            self.finish_discount_button.state(["disabled"])
             self.root.update_idletasks()
             pending_discounts = []
             for group_output, grouped_etl in self._stage1_groups(etl, output):
                 mapping = Template_Mapping(grouped_etl)
                 for method_name, attribute in TEMPLATE_EXPORTS:
+                    if method_name not in selected_templates:
+                        continue
                     result = getattr(mapping, f"_create_{method_name}")()
                     WorkbookExporter.write_template(
                         getattr(result, attribute), self._output_file(group_output, attribute, timestamp)
                     )
 
-                group_row = grouped_etl.src.iloc[0]
-                group_key = (str(group_row["STRUCTURE"]).strip(), str(group_row["FILE NAME"]).strip())
-                discount = Discount(grouped_etl, username=usernames[group_key])
-                discount._create_ag_raw()._create_ag()
-                WorkbookExporter.write_template(
-                    discount.template_ag, self._output_file(group_output, "template_ag", timestamp)
-                )
-                pending_discounts.append((group_output, discount))
+                if create_template_ag:
+                    group_row = grouped_etl.src.iloc[0]
+                    group_key = (
+                        str(group_row["STRUCTURE"]).strip(),
+                        str(group_row["FILE NAME"]).strip(),
+                    )
+                    discount = Discount(grouped_etl, username=usernames[group_key])
+                    discount._create_ag_raw()._create_ag()
+                    WorkbookExporter.write_template(
+                        discount.template_ag,
+                        self._output_file(group_output, "template_ag", timestamp),
+                    )
+                    pending_discounts.append((group_output, discount))
             self._record_used_sitegroups(etl)
             self.pending_discounts = pending_discounts
-            self.report_button.state(["!disabled"])
-            self.finish_discount_button.state(["!disabled"])
-            self.stage1_status.config(text=f"Template mapping complete. Upload the AG result report to finish discount templates. Output: {output}")
-            messagebox.showinfo("Template mapping complete", "Configuration templates and template_ag.xls were created.")
+            if create_template_ag:
+                self.report_button.state(["!disabled"])
+                self.finish_discount_button.state(["!disabled"])
+
+            created_labels = [
+                TEMPLATE_EXPORT_LABELS[name]
+                for name in TEMPLATE_EXPORT_LABELS
+                if name in selected_templates
+            ]
+            created_summary = ", ".join(created_labels)
+            self.stage1_status.config(
+                text=f"Created {len(created_labels)} template(s): {created_summary}. Output: {output}"
+            )
+            next_step = (
+                "\n\nUpload the AG result report to finish discount templates."
+                if create_template_ag
+                else ""
+            )
+            messagebox.showinfo(
+                "Template mapping complete",
+                f"Created {len(created_labels)} template(s):\n{created_summary}{next_step}",
+            )
         except Exception as error:
             self.stage1_status.config(text="Template mapping failed.")
             messagebox.showerror("Template mapping failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
@@ -1366,11 +1504,28 @@ class GoldPromoApp:
                 attribute_etl._load_plan()._load_attribute(attribute_sheet)
                 if not self._return_attribute_errors(attribute_etl, output, timestamp):
                     sale_price = SalePrice(attribute_etl)._create_attr()
+                    attribute_prefix = attribute.stem
+                    check_path = self._output_file(
+                        output,
+                        f"{attribute_prefix}_template_attr_file_check",
+                        timestamp,
+                    )
                     WorkbookExporter.write_template(
                         sale_price.template_attr,
-                        self._output_file(output, "template_attr", timestamp),
+                        check_path,
                     )
-                    created.append("template_attr.xls")
+
+                    upload_attr = sale_price.template_attr.drop(
+                        columns=["NO", "NOTE COUNT"], errors="ignore"
+                    )
+                    upload_attr = sale_price.fast_stage(upload_attr, have_no=True)
+                    output_path = self._output_file(
+                        output,
+                        f"{attribute_prefix}_template_attr",
+                        timestamp,
+                    )
+                    WorkbookExporter.write_template(upload_attr, output_path)
+                    created.extend([str(check_path), str(output_path)])
             except Exception as error:
                 messagebox.showerror("Attribute processing failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
 

@@ -1329,6 +1329,65 @@ class Template_ETL:
 
         return data
 
+    def build_gold_promo_network_report(self) -> pd.DataFrame:
+        """Summarize unique articles and resulting OA rows for every SO.
+
+        The report is built from a copy so creating it cannot modify the
+        validated source data used by the rest of the Stage 1 workflow.
+        """
+        if self.src is None:
+            raise ValueError("Stage 1 source data has not been loaded.")
+
+        required_columns = {
+            "SO",
+            "GOLD PROMO NETWORK EXPANDED",
+            "GOLD CODE",
+            "LV",
+            "LU",
+        }
+        missing_columns = required_columns.difference(self.src.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Cannot create network report; missing columns: {missing}")
+
+        report_rows = self.src[
+            ["SO", "GOLD PROMO NETWORK EXPANDED", "GOLD CODE", "LV", "LU"]
+        ].drop_duplicates().copy()
+        report_rows["SO"] = report_rows["SO"].fillna("").astype(str).str.strip()
+        report_rows["GOLD PROMO NETWORK EXPANDED"] = (
+            report_rows["GOLD PROMO NETWORK EXPANDED"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        report = (
+            report_rows.groupby(
+                ["SO", "GOLD PROMO NETWORK EXPANDED"],
+                sort=False,
+                dropna=False,
+            )
+            .size()
+            .rename("GOLD CODE + LV + LU COUNT")
+            .reset_index()
+        )
+        network_counts = report["GOLD PROMO NETWORK EXPANDED"].map(
+            lambda network: sum(bool(site.strip()) for site in network.split(";"))
+        )
+        report["OA COUNT"] = report["GOLD CODE + LV + LU COUNT"] * network_counts
+
+        total = pd.DataFrame(
+            [{
+                "SO": "TOTAL",
+                "GOLD PROMO NETWORK EXPANDED": "",
+                "GOLD CODE + LV + LU COUNT": int(
+                    report["GOLD CODE + LV + LU COUNT"].sum()
+                ),
+                "OA COUNT": int(report["OA COUNT"].sum()),
+            }]
+        )
+        return pd.concat([report, total], ignore_index=True)
+
     def _check_allocation(self, data) -> Optional[pd.DataFrame]:
         delivery_columns = ["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]
         site_columns = [
