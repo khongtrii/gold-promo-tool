@@ -503,7 +503,17 @@ class SupplierScheduleMixin(CalendarMixin):
             column_supplier_schedule[10]: "1",
             column_supplier_schedule[11]: "1",
             column_supplier_schedule[12]: "",
-            "%DELI": data[["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]].values.tolist(),
+            "%DELI": data[["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]]
+            .apply(
+                lambda column: column.map(
+                    lambda value: (
+                        value
+                        if pd.isna(value)
+                        else str(value).strip().replace("%", "").strip()
+                    )
+                )
+            )
+            .values.tolist(),
             "DELIVERY TYPE": data["DELIVERY TYPE"],
         }
 
@@ -870,15 +880,13 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
 
             template_dc_free[column_dc[20]] = (
                 template_dc_free[column_dc[20]]
-                .str.replace("TH", "", regex=False)
-                .str.replace("T", "", regex=False)
+                .str.replace(r"th|t", "", case=False, regex=True)
                 .str.strip()
             )
             
             template_dc_free[column_dc[22]] = (
                 template_dc_free[column_dc[22]]
-                .str.replace("TH", "", regex=False)
-                .str.replace("T", "", regex=False)
+                .str.replace(r"th|t", "", case=False, regex=True)
                 .str.strip()
             )
     
@@ -1010,6 +1018,9 @@ class SalePrice(StageMixin):
         if self.src_attr is None:
             raise ValueError("Attribute data has not been loaded.")
         data = self.src_attr.copy()
+        note_count = data.groupby(["GOLD CODE", "SV"], dropna=False)[
+            "GOLD CODE"
+        ].transform("size")
 
         template_attr = pd.DataFrame({
             column_attr[0]: "0",
@@ -1023,6 +1034,7 @@ class SalePrice(StageMixin):
             column_attr[8]: "",
             column_attr[9]: data["START DATE"],
             column_attr[10]: data["END DATE"],
+            column_attr[11]: note_count,
         })
 
         self.template_attr = self.fast_stage(template_attr[column_attr], have_no=True)

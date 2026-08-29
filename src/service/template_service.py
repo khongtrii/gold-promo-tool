@@ -35,7 +35,7 @@ class Template_ETL:
         "POSITION",
     )
     ATTRIBUTE_CLASS_RULES = (
-        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat)\b"), "HEROP"),
+        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat|hero)\b"), "HEROP"),
         (re.compile(r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"), "CATAP"),
         (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLEP"),
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
@@ -52,6 +52,7 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STAR"),
     )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
+    ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
 
@@ -370,17 +371,28 @@ class Template_ETL:
         # self._check_required_columns(data, list(self.ATTRIBUTE_COLUMNS))
         data = data.loc[:, self.ATTRIBUTE_COLUMNS].dropna(how="all").copy()
         data = self._ensure_note_err(data)
-        self._check_required_data(data, list(self.ATTRIBUTE_COLUMNS))
+        required_attribute_data = [
+            column
+            for column in self.ATTRIBUTE_COLUMNS
+            if column not in {"START DATE", "END DATE"}
+        ]
+        self._check_required_data(data, required_attribute_data)
         data["_SOURCE_ROW"] = data.index + header_row + 2
 
-        def attribute_class(value) -> str:
+        def attribute_class(value) -> str | None:
             text = "" if pd.isna(value) else str(value).strip()
             for pattern, attribute in self.ATTRIBUTE_CLASS_RULES:
                 if pattern.search(text):
                     return attribute
-            return text
+            return None
 
         data["CLASS"] = data["POSITION"].map(attribute_class)
+        invalid_class = data["CLASS"].isna()
+        self._append_note_err(
+            data,
+            data.index[invalid_class],
+            self.ATTRIBUTE_CLASS_ERROR,
+        )
         data["Alphanum"] = (
             data["POSITION"].astype(str).str.strip()
             + ".P."
@@ -389,35 +401,26 @@ class Template_ETL:
             + data["REGION (NORTH/SOUTH/CENTER/ALL)"].astype(str).str.strip()
         )
 
-        data["START DATE"] = pd.to_datetime(
-            data["START DATE"],
-            errors="coerce",
-            dayfirst=True,
-        )
-        data["END DATE"] = pd.to_datetime(
-            data["END DATE"],
-            errors="coerce",
-            dayfirst=True,
-        )
+        if self.plan is None or self.plan.empty:
+            raise ValueError(f"Không tìm thấy CATALOGUE {self.cata} trong Master data.")
 
-        today = pd.Timestamp.today().normalize()
-        data.loc[data["START DATE"].notna() & data["START DATE"].le(today), "START DATE"] = today + pd.Timedelta(days=1)
-        self._append_note_err(
-            data,
-            data.index[data["START DATE"].isna() | data["END DATE"].isna()],
-            "START DATE và END DATE phải là ngày hợp lệ.",
+        catalogue_start_date = pd.to_datetime(
+            self.plan["CATALOGUE START DATE"].iat[0],
+            errors="coerce",
+            dayfirst=True,
         )
-        self._append_note_err(
-            data,
-            data.index[
-                data["START DATE"].notna()
-                & data["END DATE"].notna()
-                & data["START DATE"].gt(data["END DATE"])
-            ],
-            "START DATE phải nhỏ hơn hoặc bằng END DATE.",
+        catalogue_end_date = pd.to_datetime(
+            self.plan["CATALOGUE END DATE"].iat[0],
+            errors="coerce",
+            dayfirst=True,
         )
-        data["START DATE"] = data["START DATE"].dt.strftime("%d/%m/%Y")
-        data["END DATE"] = data["END DATE"].dt.strftime("%d/%m/%Y")
+        if pd.isna(catalogue_start_date) or pd.isna(catalogue_end_date):
+            raise ValueError(
+                f"CATALOGUE {self.cata} có START DATE hoặc END DATE không hợp lệ trong Master data."
+            )
+
+        data["START DATE"] = catalogue_start_date.strftime("%d/%m/%Y")
+        data["END DATE"] = catalogue_end_date.strftime("%d/%m/%Y")
 
         self.src_attr = data.drop_duplicates().reset_index(drop=True)
         self.attribute_sheet_name = sheet_name
@@ -469,7 +472,10 @@ class Template_ETL:
             data["NORMAL PURCHASE PRICE"] = normal_purchase_price.astype(float)
 
             discount_text = (
-                data["DISCOUNT (% OR VALUE)"].fillna("").astype(str).str.strip()
+                data["DISCOUNT (% OR VALUE)"]
+                .fillna("")
+                .astype(str)
+                .str.replace(r"\s+", "", regex=True)
             )
             plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
             numeric_discount = pd.to_numeric(
@@ -485,6 +491,9 @@ class Template_ETL:
             data["DISCOUNT (% OR VALUE)"] = data[
                 "DISCOUNT (% OR VALUE)"
             ].astype(object)
+            data.loc[~plain_discount, "DISCOUNT (% OR VALUE)"] = discount_text.loc[
+                ~plain_discount
+            ]
             data.loc[
                 valid_plain_discount, "DISCOUNT (% OR VALUE)"
             ] = numeric_discount.loc[valid_plain_discount].astype(float)
@@ -676,7 +685,7 @@ class Template_ETL:
 
         return result
 
-    def _extract_network(self, expression: str) -> str:
+    def _extract_network(self, expression: str, deduplicate: bool = True) -> str:
         if pd.isna(expression) or expression is None:
             return ""
 
@@ -705,8 +714,10 @@ class Template_ETL:
             result = []
             seen = set()
             for component in components:
-                for site in self._parse_sites(self._extract_network(component)):
-                    if site not in seen:
+                for site in self._parse_sites(
+                    self._extract_network(component, deduplicate=deduplicate)
+                ):
+                    if not deduplicate or site not in seen:
                         seen.add(site)
                         result.append(site)
             return ";".join(result)
@@ -748,7 +759,7 @@ class Template_ETL:
             seen = set()
 
             for site in self._expand(expression, self.dict_network.get("network")):
-                if site not in seen:
+                if not deduplicate or site not in seen:
                     seen.add(site)
                     result.append(site)
 
@@ -761,7 +772,7 @@ class Template_ETL:
         seen = set()
 
         for site in self._expand(base_token, self.dict_network.get("network")):
-            if site not in seen:
+            if not deduplicate or site not in seen:
                 seen.add(site)
                 result.append(site)
 
@@ -774,7 +785,7 @@ class Template_ETL:
 
             if op == "+":
                 for s in sites:
-                    if s not in seen:
+                    if not deduplicate or s not in seen:
                         seen.add(s)
                         result.append(s)
             else:
@@ -814,6 +825,67 @@ class Template_ETL:
         text = re.sub(f"{re.escape(replacement)}+", replacement, text)
         return text
 
+    @staticmethod
+    def _has_valid_network_rule(expression) -> bool:
+        """Return whether an expression follows the supported SITE RULE syntax."""
+        if pd.isna(expression):
+            return False
+
+        expression = str(expression).strip().replace(" ", "")
+        if not expression:
+            return False
+
+        components = []
+        start = 0
+        depth = 0
+        for position, character in enumerate(expression):
+            if character == "(":
+                depth += 1
+                if depth > 1:
+                    return False
+            elif character == ")":
+                depth -= 1
+                if depth < 0:
+                    return False
+            elif character == ";" and depth == 0:
+                component = expression[start:position]
+                if not component:
+                    return False
+                components.append(component)
+                start = position + 1
+        if depth != 0 or start == len(expression):
+            return False
+        components.append(expression[start:])
+
+        token = r"[A-Za-z0-9]+"
+        token_list = rf"{token}(?:;{token})*"
+        standard = re.compile(rf"{token}(?:[+-](?:{token}|\({token_list}\)))+")
+        plain = re.compile(rf"{token}|\({token_list}\)")
+        compact = re.compile(rf"({token})\((.+)\)")
+
+        for component in components:
+            if plain.fullmatch(component) or standard.fullmatch(component):
+                continue
+
+            match = compact.fullmatch(component)
+            if match is None:
+                return False
+            inside = match.group(2)
+            adjustments = re.findall(r"[+-][^+-]+", inside)
+            if not adjustments or "".join(adjustments) != inside:
+                return False
+            for index, adjustment in enumerate(adjustments):
+                raw_values = adjustment[1:]
+                if raw_values.startswith(";") or (
+                    raw_values.endswith(";") and index == len(adjustments) - 1
+                ):
+                    return False
+                values = raw_values.rstrip(";")
+                if not values or re.fullmatch(token_list, values) is None:
+                    return False
+
+        return True
+
     def _check_network(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
 
@@ -828,6 +900,28 @@ class Template_ETL:
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
 
+            messages = []
+            for source_column, expanded_column in (
+                ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"),
+                ("GOLD PROMO NETWORK", "GOLD PROMO NETWORK EXPANDED"),
+            ):
+                valid_rule = rows[source_column].map(self._has_valid_network_rule)
+                if (~valid_rule).any():
+                    messages.append(f"{source_column} không đúng SITE RULE.")
+
+                has_adjustment = rows[source_column].astype(str).str.contains(
+                    r"[+-]", regex=True, na=False
+                )
+                empty_after_expand = (
+                    valid_rule
+                    & has_adjustment
+                    & rows[expanded_column].fillna("").astype(str).str.strip().eq("")
+                )
+                if empty_after_expand.any():
+                    messages.append(
+                        f"{source_column} sau khi expand +/- bị rỗng, vui lòng kiểm tra lại."
+                    )
+
             invalid_sites = set()
             for col in ["PURCHASE NETWORK EXPANDED", "GOLD PROMO NETWORK EXPANDED"]:
                 for value in rows[col]:
@@ -835,8 +929,6 @@ class Template_ETL:
                         site for site in self._parse_sites(value)
                         if site not in valid_stores
                     )
-
-            messages = []
 
             if invalid_sites:
                 invalid_sorted = sorted(invalid_sites, key=self._sort_key)
@@ -858,6 +950,27 @@ class Template_ETL:
 
     def _ppNetwork_gpNetwork(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
+
+        for _, related_indices in data.groupby(
+            ["GOLD CODE", "LV"], dropna=False
+        ).groups.items():
+            duplicates = set()
+            for value in data.loc[related_indices, "PURCHASE NETWORK"]:
+                expanded_with_duplicates = self._parse_sites(
+                    self._extract_network(value, deduplicate=False)
+                )
+                counts = Counter(expanded_with_duplicates)
+                duplicates.update(
+                    site for site, count in counts.items() if count > 1
+                )
+            if duplicates:
+                sorted_duplicates = sorted(duplicates, key=self._sort_key)
+                self._append_note_err(
+                    data,
+                    pd.Index(related_indices),
+                    "PURCHASE NETWORK bị trùng lặp: "
+                    + ";".join(sorted_duplicates),
+                )
 
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
@@ -1214,6 +1327,65 @@ class Template_ETL:
 
         return data
 
+    def build_gold_promo_network_report(self) -> pd.DataFrame:
+        """Summarize unique articles and resulting OA rows for every SO.
+
+        The report is built from a copy so creating it cannot modify the
+        validated source data used by the rest of the Stage 1 workflow.
+        """
+        if self.src is None:
+            raise ValueError("Stage 1 source data has not been loaded.")
+
+        required_columns = {
+            "SO",
+            "GOLD PROMO NETWORK EXPANDED",
+            "GOLD CODE",
+            "LV",
+            "LU",
+        }
+        missing_columns = required_columns.difference(self.src.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Cannot create network report; missing columns: {missing}")
+
+        report_rows = self.src[
+            ["SO", "GOLD PROMO NETWORK EXPANDED", "GOLD CODE", "LV", "LU"]
+        ].drop_duplicates().copy()
+        report_rows["SO"] = report_rows["SO"].fillna("").astype(str).str.strip()
+        report_rows["GOLD PROMO NETWORK EXPANDED"] = (
+            report_rows["GOLD PROMO NETWORK EXPANDED"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        report = (
+            report_rows.groupby(
+                ["SO", "GOLD PROMO NETWORK EXPANDED"],
+                sort=False,
+                dropna=False,
+            )
+            .size()
+            .rename("GOLD CODE + LV + LU COUNT")
+            .reset_index()
+        )
+        network_counts = report["GOLD PROMO NETWORK EXPANDED"].map(
+            lambda network: sum(bool(site.strip()) for site in network.split(";"))
+        )
+        report["OA COUNT"] = report["GOLD CODE + LV + LU COUNT"] * network_counts
+
+        total = pd.DataFrame(
+            [{
+                "SO": "TOTAL",
+                "GOLD PROMO NETWORK EXPANDED": "",
+                "GOLD CODE + LV + LU COUNT": int(
+                    report["GOLD CODE + LV + LU COUNT"].sum()
+                ),
+                "OA COUNT": int(report["OA COUNT"].sum()),
+            }]
+        )
+        return pd.concat([report, total], ignore_index=True)
+
     def _check_allocation(self, data) -> Optional[pd.DataFrame]:
         delivery_columns = ["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]
         site_columns = [
@@ -1337,9 +1509,6 @@ class Template_ETL:
         key_columns = [
             "GOLD CODE",
             "LV",
-            "LU",
-            "SUPPLIER CODE",
-            "COMMERCIAL CONTRACT",
         ]
         value_columns = [
             "NORMAL PURCHASE PRICE",
@@ -1382,10 +1551,41 @@ class Template_ETL:
 
         return data
 
-    def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
+    def _validate_duplicate_purchase_information(
+        self,
+        data: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Flag rows with identical purchase and discount information."""
+        self._ensure_note_err(data)
+        duplicate_columns = [
+            "GOLD CODE",
+            "LV",
+            "LU",
+            "SUPPLIER CODE",
+            "COMMERCIAL CONTRACT",
+            "PURCHASE NETWORK",
+            "NORMAL PURCHASE PRICE",
+            "DISCOUNT (% OR VALUE)",
+        ]
+        normalized = data.loc[:, duplicate_columns].fillna("").astype(str).apply(
+            lambda column: column.str.strip()
+        )
+        duplicate_rows = normalized.duplicated(
+            subset=duplicate_columns,
+            keep=False,
+        )
         self._append_note_err(
             data,
-            data.index[~data["LU"].astype(str).isin(["1", "41"])],
+            data.index[duplicate_rows],
+            "Thông tin mua hàng và chiết khấu bị trùng.",
+        )
+        return data
+
+    def _field_validator(self, data: pd.DataFrame) -> pd.DataFrame:
+        lu_values = data["LU"].fillna("").astype(str).str.strip()
+        self._append_note_err(
+            data,
+            data.index[~lu_values.isin(["1", "41"])],
             "LU chỉ được phép là 1 hoặc 41."
         )
 
@@ -1469,10 +1669,12 @@ class Template_ETL:
             # the separate Add Site Group action in the desktop workflow.
             data["STRUCTURE"] = source_structure
             data = self._getSO(data)
+        data = self._field_validator(data)
         data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)
         data = self._convert_date(data)
 
+        data = self._validate_duplicate_purchase_information(data)
         data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(self._contract_checking)
         data = self._validate_overlapping_price_or_discount(data)
 
