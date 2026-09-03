@@ -303,7 +303,8 @@ class SiteGroupReview:
             self.window,
             text=(
                 "Suggestions are calculated only from GOLD PROMO NETWORK EXPANDED and master SITE lists. "
-                "A code is suggested only when both Missing and Extra counts are at most 5; otherwise enter it manually. "
+                "The closest existing code is suggested when both Missing and Extra counts are at most 5; "
+                "otherwise a new available five-digit code is generated. "
                 "Double-click a Suggested code to change it."
             ),
         ).pack(anchor="w", padx=12, pady=(12, 6))
@@ -335,6 +336,8 @@ class SiteGroupReview:
             self.tree.column(column, width=widths[column], anchor="w")
         for suggestion in suggestions:
             members = ";".join(self.etl.sitegroup_members.get(suggestion["suggested_code"], ()))
+            if not members and not suggestion["original_suggested_code"]:
+                members = suggestion["expanded_network"]
             self.tree.insert(
                 "", "end",
                 values=(

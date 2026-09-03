@@ -2,6 +2,7 @@ from collections import Counter
 import os
 from pathlib import Path
 import re
+import secrets
 import tempfile
 from typing import List, Optional
 
@@ -85,6 +86,7 @@ class Template_ETL:
         self.sitegroup: dict = dict()
         self.sitegroup_members: dict[str, tuple[str, ...]] = dict()
         self.master_sitegroup_codes: set[str] = set()
+        self.activated_sitegroup_codes: set[str] = set()
         # These codes remain valid for exact Site Group matching. They are
         # reserved only from automatic suggestions.
         reserved_sitegroup_codes = (
@@ -644,7 +646,29 @@ class Template_ETL:
         }
         exact_matches = data.drop_duplicates(subset=["SITE"])
         self.sitegroup = dict(zip(exact_matches["SITE"], exact_matches["SITE_GROUP"]))
+
+        activated = pd.read_excel(
+            self.path_sitegroup,
+            dtype=str,
+            sheet_name="site-group-activated",
+        )
+        self._check_required_columns(activated, ["SITE_GROUP"])
+        self.activated_sitegroup_codes = {
+            str(code).strip()
+            for code in activated["SITE_GROUP"].fillna("")
+            if str(code).strip()
+        }
         return self
+
+    @staticmethod
+    def _generate_sitegroup_code(unavailable_codes: set[str]) -> str:
+        """Generate an available five-digit Site Group code."""
+        first_offset = secrets.randbelow(90000)
+        for offset in range(90000):
+            code = str(10000 + ((first_offset + offset) % 90000))
+            if code not in unavailable_codes:
+                return code
+        raise ValueError("Không còn mã SITE GROUP 5 chữ số khả dụng.")
 
     def _load_plan(self) -> "Template_ETL":
         plan = pd.read_excel(
@@ -1114,7 +1138,7 @@ class Template_ETL:
         return data
 
     def get_sitegroup_suggestions(self) -> list[dict]:
-        """Suggest master Site Groups whose store differences are at most five."""
+        """Suggest a nearby existing Site Group or an unused five-digit code."""
         if self.src is None:
             return []
 
@@ -1145,19 +1169,11 @@ class Template_ETL:
                 extra = sorted(candidate_sites - current_sites, key=self._sort_key)
                 candidates.append((len(missing) + len(extra), len(missing), len(extra), code, missing, extra))
 
-            if not candidates:
-                continue
-
             unavailable_codes = assigned_codes | suggested_codes
             available_candidates = [
                 item for item in candidates
                 if item[3] not in unavailable_codes
             ]
-            comparison_candidates = available_candidates or candidates
-            nearest = min(
-                comparison_candidates,
-                key=lambda item: (item[0], item[1], item[2], self._sort_key(item[3])),
-            )
             eligible = [
                 item for item in available_candidates
                 if item[1] <= 5 and item[2] <= 5
@@ -1168,11 +1184,34 @@ class Template_ETL:
                     key=lambda item: (item[0], item[1], item[2], self._sort_key(item[3])),
                 )
                 suggested_codes.add(code)
+                original_code = code
             else:
-                # Keep the closest difference visible for review, but leave
-                # the code blank so the user must enter it manually.
-                _, missing_count, extra_count, _, missing, extra = nearest
-                code = ""
+                # Keep the closest difference visible for review and propose
+                # a new five-digit code not used by either Site Group sheet.
+                if available_candidates or candidates:
+                    nearest = min(
+                        available_candidates or candidates,
+                        key=lambda item: (
+                            item[0], item[1], item[2], self._sort_key(item[3])
+                        ),
+                    )
+                    _, missing_count, extra_count, _, missing, extra = nearest
+                else:
+                    missing = sorted(current_sites, key=self._sort_key)
+                    extra = []
+                    missing_count = len(missing)
+                    extra_count = 0
+                unavailable_new_codes = (
+                    self.master_sitegroup_codes
+                    | self.activated_sitegroup_codes
+                    | assigned_codes
+                    | suggested_codes
+                    | self.non_suggested_sitegroup_codes
+                )
+                code = self._generate_sitegroup_code(unavailable_new_codes)
+                suggested_codes.add(code)
+                # A blank original marks this as a new code when accepted.
+                original_code = ""
             raw_networks = sorted(
                 {str(value) for value in rows["GOLD PROMO NETWORK"].dropna() if str(value).strip()}
             )
@@ -1190,7 +1229,7 @@ class Template_ETL:
                     "gold_promo_network": "; ".join(raw_networks),
                     "expanded_network": network,
                     "suggested_code": code,
-                    "original_suggested_code": code,
+                    "original_suggested_code": original_code,
                     "missing_count": missing_count,
                     "extra_count": extra_count,
                     "missing_stores": ";".join(missing),
@@ -1209,7 +1248,11 @@ class Template_ETL:
             selected = str(suggestion.get("suggested_code", "")).strip()
             if selected == original or not selected:
                 continue
-            if selected in self.master_sitegroup_codes or selected in new_codes:
+            if (
+                selected in self.master_sitegroup_codes
+                or selected in self.activated_sitegroup_codes
+                or selected in new_codes
+            ):
                 duplicate_codes.add(selected)
             new_codes.add(selected)
         return sorted(duplicate_codes, key=self._sort_key)
@@ -1329,6 +1372,7 @@ class Template_ETL:
             temporary_path = None
             try:
                 sheet = workbook["site-group"]
+                activated_sheet = workbook["site-group-activated"]
                 headers = {
                     str(sheet.cell(1, column).value).strip(): column
                     for column in range(1, sheet.max_column + 1)
@@ -1337,6 +1381,41 @@ class Template_ETL:
                 site_column = headers.get("SITE")
                 if code_column is None or site_column is None:
                     raise ValueError("Sheet site-group must contain SITE_GROUP and SITE columns.")
+
+                activated_code_column = next(
+                    (
+                        column
+                        for column in range(1, activated_sheet.max_column + 1)
+                        if str(activated_sheet.cell(1, column).value).strip()
+                        == "SITE_GROUP"
+                    ),
+                    None,
+                )
+                if activated_code_column is None:
+                    raise ValueError(
+                        "Sheet site-group-activated must contain the SITE_GROUP column."
+                    )
+                activated_codes = {
+                    str(activated_sheet.cell(row, activated_code_column).value).strip()
+                    for row in range(2, activated_sheet.max_row + 1)
+                    if activated_sheet.cell(row, activated_code_column).value is not None
+                    and str(
+                        activated_sheet.cell(row, activated_code_column).value
+                    ).strip()
+                }
+                activated_duplicates = sorted(
+                    {
+                        code
+                        for code, _ in new_rows
+                        if code in activated_codes
+                    },
+                    key=self._sort_key,
+                )
+                if activated_duplicates:
+                    raise ValueError(
+                        "Duplicate Site Group in site-group-activated: "
+                        + "; ".join(activated_duplicates)
+                    )
 
                 max_row = sheet.max_row
                 max_col = sheet.max_column
@@ -1369,6 +1448,14 @@ class Template_ETL:
                         new_row[site_column - 1] = site
                         sheet.append(new_row)
 
+                # Only newly created codes are appended to the activated list;
+                # replacements of existing Site Groups do not add another row.
+                activated_template = [None] * activated_sheet.max_column
+                for code, _ in new_rows:
+                    activated_row = activated_template.copy()
+                    activated_row[activated_code_column - 1] = code
+                    activated_sheet.append(activated_row)
+
                 with tempfile.NamedTemporaryFile(
                     suffix=self.path_sitegroup.suffix,
                     dir=self.path_sitegroup.parent,
@@ -1390,6 +1477,7 @@ class Template_ETL:
                 self.sitegroup_members.pop(code, None)
             self.sitegroup_members.update(replacement_rows)
             self.sitegroup_members.update(dict(new_rows))
+            self.activated_sitegroup_codes.update(code for code, _ in new_rows)
             return True
 
     def apply_sitegroup_suggestions(self, suggestions: list[dict]) -> list[dict]:

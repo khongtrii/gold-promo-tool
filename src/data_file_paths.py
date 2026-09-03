@@ -12,6 +12,10 @@ DATA_FILE_SYSTEM_FOLDERS = (
     Path("Khong Minh Tri's files - gold_promo") / "data_file_system",
 )
 
+DEFAULT_MASTER_DATA_PATH = Path(
+    r"\\al-dc01\MasterData\MasterDataMacro\goldPromoSystem\master_data_metadata.xlsm"
+)
+
 
 def get_onedrive_root() -> Path | None:
     for variable in ("OneDriveRoot", "OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
@@ -41,5 +45,4 @@ def find_data_file_location(file_name: str) -> Path | None:
 
 
 def default_master_data_path() -> str:
-    path = find_existing_data_file("master_data_metadata.xlsm")
-    return str(path) if path is not None else ""
+    return str(DEFAULT_MASTER_DATA_PATH)
