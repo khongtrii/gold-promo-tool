@@ -752,6 +752,46 @@ class Template_ETL:
         components.append(expression[start:])
         components = [component for component in components if component]
 
+        # A compact adjustment at the end applies to the union of the
+        # preceding top-level networks. For example,
+        # ``8210;8220(-112;126)`` means ``8210+8220-(112;126)``.
+        if len(components) > 1:
+            for compact_index, component in enumerate(components):
+                compact = re.fullmatch(
+                    r"([A-Za-z0-9]+)\(([^()]*)\)((?:[+-].*)?)",
+                    component,
+                )
+                other_components = [
+                    *components[:compact_index],
+                    *components[compact_index + 1:],
+                ]
+                if compact is None or not all(
+                    re.fullmatch(r"[A-Za-z0-9]+", value)
+                    for value in other_components
+                ):
+                    continue
+
+                adjustments = re.findall(r"[+-][^+-]+", compact.group(2))
+                if not adjustments or "".join(adjustments) != compact.group(2):
+                    continue
+
+                expression = "+".join(
+                    [*components[:compact_index], compact.group(1)]
+                )
+                for adjustment in adjustments:
+                    sign = adjustment[0]
+                    value = adjustment[1:]
+                    expression += (
+                        f"{sign}({value})"
+                        if ";" in value
+                        else f"{sign}{value}"
+                    )
+                expression += compact.group(3)
+                for value in components[compact_index + 1:]:
+                    expression += f"+{value}"
+                components = [expression]
+                break
+
         if len(components) > 1:
             result = []
             seen = set()
@@ -789,7 +829,10 @@ class Template_ETL:
                         expr += f"{sign}{value}"
 
                 if suffix:
-                    expr += f"+({suffix})" if ";" in suffix else f"+{suffix}"
+                    if suffix.startswith(("+", "-")):
+                        expr += suffix
+                    else:
+                        expr += f"+({suffix})" if ";" in suffix else f"+{suffix}"
 
                 expression = expr
 
@@ -903,7 +946,9 @@ class Template_ETL:
         token_list = rf"{token}(?:;{token})*"
         standard = re.compile(rf"{token}(?:[+-](?:{token}|\({token_list}\)))+")
         plain = re.compile(rf"{token}|\({token_list}\)")
-        compact = re.compile(rf"({token})\((.+)\)")
+        compact = re.compile(
+            rf"({token})\(([^()]*)\)((?:[+-](?:{token}|\({token_list}\)))*)"
+        )
 
         for component in components:
             if plain.fullmatch(component) or standard.fullmatch(component):
