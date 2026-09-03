@@ -12,7 +12,17 @@ from typing import Callable
 
 from src.data_file_paths import find_data_file_location
 
-DEFAULT_SITEGROUP_STATE = {"EXC_SITE_GROUP": [], "ACTIVE": "no"}
+DEFAULT_EXCLUDED_SITEGROUPS = (
+    "8000", "8200", "8201", "8202", "8203", "8300", "8710", "8711", "8712",
+    "8210", "8220", "8230", "8310", "8320", "8330",
+    "1100", "1200", "1300", "2100", "2200", "2300",
+    "99990", "99991", "99992", "99993", "99994",
+    "99995", "99996", "99997", "99998", "99999",
+)
+DEFAULT_SITEGROUP_STATE = {
+    "EXC_SITE_GROUP": list(DEFAULT_EXCLUDED_SITEGROUPS),
+    "ACTIVE": "no",
+}
 
 
 def get_sitegroup_state_path(catalogue: str) -> Path | None:
@@ -41,7 +51,8 @@ def _normalize_state(state) -> tuple[dict, bool]:
         changed = True
     codes = []
     seen = set()
-    for value in raw_codes:
+    # Built-in exceptions are always present while retaining user-added codes.
+    for value in (*DEFAULT_EXCLUDED_SITEGROUPS, *raw_codes):
         code = str(value).strip()
         if code and code not in seen:
             codes.append(code)

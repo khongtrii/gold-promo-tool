@@ -55,6 +55,7 @@ class Template_ETL:
     ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
+    DISCOUNT_PERCENTAGE_LIMIT_ERROR = "DISCOUNT (% OR VALUE) không được vượt quá 100%."
 
     def __init__(
         self,
@@ -64,6 +65,7 @@ class Template_ETL:
         path_attribute=None,
         non_suggested_sitegroup_codes=None,
         excluded_sitegroup_codes=None,
+        check_attribute=False,
     ):
         if path_src is None:
             self.path_src: tuple[Path, ...] = ()
@@ -76,6 +78,7 @@ class Template_ETL:
         self.path_attribute = Path(path_attribute) if path_attribute is not None else None
         self.path_sitegroup = Path(path_sitegroup) if path_sitegroup is not None else None
         self.path_plan = Path(path_plan) if path_plan is not None else None
+        self.check_attribute = bool(check_attribute)
 
         self.dict_network: dict = dict()
 
@@ -118,7 +121,24 @@ class Template_ETL:
         department = "" if pd.isna(value) else str(value).strip()
         return department[:4].lstrip("0") or "0"
 
-    def _load_source_metadata(self) -> dict[Path, pd.DataFrame]:
+    @staticmethod
+    def _percentage_discount_exceeds_limit(value: str) -> bool:
+        """Return whether any percentage component is greater than 100."""
+        for component in str(value).split("+"):
+            if not component.endswith("%"):
+                continue
+            try:
+                percentage = float(component[:-1].replace(",", "."))
+            except ValueError:
+                continue
+            if percentage > 100:
+                return True
+        return False
+
+    def _load_source_metadata(
+        self,
+        sheet_names: dict[Path, str] | None = None,
+    ) -> dict[Path, pd.DataFrame]:
         """Read metadata from every source and ensure they form one catalogue run."""
         if not self.path_src:
             raise ValueError("At least one Gold Promo source file is required.")
@@ -130,7 +150,12 @@ class Template_ETL:
         ]
         required_columns = [*comparison_columns, "DEPARTMENT", "CATALOGUE DESCRIPTION"]
         metadata = {
-            path: pd.read_excel(path, nrows=2, dtype=str, sheet_name="Template")
+            path: pd.read_excel(
+                path,
+                nrows=2,
+                dtype=str,
+                sheet_name=(sheet_names or {}).get(path, "Template"),
+            )
             for path in self.path_src
         }
         for path, data in metadata.items():
@@ -448,11 +473,12 @@ class Template_ETL:
                 converted_attribute.loc[matched] = category
 
             invalid_attribute = converted_attribute.isna()
-            self._append_note_err(
-                data,
-                data.index[invalid_attribute],
-                self.ATTRIBUTE_MARKETING_ERROR,
-            )
+            if self.check_attribute:
+                self._append_note_err(
+                    data,
+                    data.index[invalid_attribute],
+                    self.ATTRIBUTE_MARKETING_ERROR,
+                )
             data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[
                 ~invalid_attribute
             ]
@@ -487,6 +513,14 @@ class Template_ETL:
                 data.index[invalid_discount],
                 self.DISCOUNT_VALUE_ERROR,
             )
+            percentage_over_limit = discount_text.map(
+                self._percentage_discount_exceeds_limit
+            )
+            self._append_note_err(
+                data,
+                data.index[percentage_over_limit],
+                self.DISCOUNT_PERCENTAGE_LIMIT_ERROR,
+            )
             valid_plain_discount = plain_discount & ~invalid_discount
             data["DISCOUNT (% OR VALUE)"] = data[
                 "DISCOUNT (% OR VALUE)"
@@ -514,8 +548,11 @@ class Template_ETL:
         self.should_generate_so_sitegroup = True
         return self
 
-    def _load_src_listoff(self) -> "Template_ETL":
-        metadata = self._load_source_metadata()
+    def _load_src_listoff(
+        self,
+        sheet_names: dict[Path, str] | None = None,
+    ) -> "Template_ETL":
+        metadata = self._load_source_metadata(sheet_names)
         sources = []
         period_columns = ['SP START DAY', 'SP START MONTH', 'SP START YEAR', 'SP END DAY', 'SP END MONTH', 'SP END YEAR']
         required = [
@@ -525,7 +562,12 @@ class Template_ETL:
             "SALE VAT",
         ]
         for path in self.path_src:
-            data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
+            data = pd.read_excel(
+                path,
+                header=6,
+                dtype=str,
+                sheet_name=(sheet_names or {}).get(path, "Template"),
+            )
             sale_period = metadata[path]
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
             data["NOTE ERR FROM MASTER DATA"] = ""
@@ -1546,7 +1588,7 @@ class Template_ETL:
             self._append_note_err(
                 data,
                 data.index[data.index.isin(conflicting_indices)],
-                "Giá mua hoặc chiết khấu bị chồng chéo",
+                "Thông tin mua hàng và chiết khấu bị trùng.",
             )
 
         return data

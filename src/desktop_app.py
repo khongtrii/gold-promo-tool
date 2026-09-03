@@ -110,15 +110,20 @@ class WorkbookExporter:
         return value
 
     @staticmethod
-    def write_source_errors(source_path: Path, errors: pd.DataFrame, output_path: Path) -> None:
+    def write_source_errors(
+        source_path: Path,
+        errors: pd.DataFrame,
+        output_path: Path,
+        sheet_name: str = "Template",
+    ) -> None:
         """Copy the source workbook and append notes at the original data rows.
 
-        This deliberately edits only the ``Template`` sheet.  All workbook
+        This deliberately edits only the selected source sheet. All workbook
         metadata, rows 1--2, and sheets such as ``Network Configure`` are
         retained from the selected source file.
         """
         source_workbook = load_workbook(source_path, data_only=False)
-        source_sheet = source_workbook["Template"]
+        source_sheet = source_workbook[sheet_name]
 
         existing_note_column = next(
             (column for column in range(1, source_sheet.max_column + 1)
@@ -498,6 +503,7 @@ class GoldPromoApp:
             value=default_master_data_path()
         )
         self.stage1_output = StringVar(value=str(Path.cwd() / "output"))
+        self.stage1_check_attribute = BooleanVar(value=False)
         self.non_suggested_sitegroup_input = StringVar()
         self.report_ag = StringVar()
 
@@ -610,10 +616,19 @@ class GoldPromoApp:
         self.non_suggested_sitegroup_list = Listbox(excluded_frame, height=4, selectmode="extended")
         self.non_suggested_sitegroup_list.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
-        ttk.Separator(frame).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Button(frame, text="Validate Pipeline / Get SO", command=self.run_stage1).grid(row=6, column=0, sticky="w")
+        ttk.Checkbutton(
+            frame,
+            text="Check Attribute",
+            variable=self.stage1_check_attribute,
+            command=self._on_check_attribute_changed,
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 2))
+        ttk.Separator(frame).grid(row=6, column=0, columnspan=3, sticky="ew", pady=10)
+        self.stage1_validate_button = ttk.Button(
+            frame, text="Validate Pipeline / Get SO", command=self.run_stage1
+        )
+        self.stage1_validate_button.grid(row=7, column=0, sticky="w")
         action_frame = ttk.Frame(frame)
-        action_frame.grid(row=6, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        action_frame.grid(row=7, column=1, columnspan=2, sticky="w", padx=(8, 0))
         self.check_oa_button = ttk.Button(action_frame, text="Create Check OA File", command=self.create_check_oa)
         self.check_oa_button.pack(side="left")
         self.check_oa_button.state(["disabled"])
@@ -628,17 +643,46 @@ class GoldPromoApp:
         self.stage1_source.trace_add("write", self._update_template_mapping_button)
         self._update_template_mapping_button()
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
-        self.stage1_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 14))
+        self.stage1_status.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 14))
 
         self.report_button = self._multi_file_row(
-            frame, 8, "AG result report(s)", self.report_ag, excel_files, state="disabled"
+            frame, 9, "AG result report(s)", self.report_ag, excel_files, state="disabled"
         )
         self.finish_discount_button = ttk.Button(frame, text="Finish Discount Templates", command=self.finish_discount)
-        self.finish_discount_button.grid(row=9, column=1, sticky="w", pady=(6, 0))
+        self.finish_discount_button.grid(row=10, column=1, sticky="w", pady=(6, 0))
         self.finish_discount_button.state(["disabled"])
         self.export_src_button = ttk.Button(frame, text="Export Processed Src", command=self.export_processed_src)
-        self.export_src_button.grid(row=9, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.export_src_button.grid(row=10, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.export_src_button.state(["disabled"])
+
+    def _on_check_attribute_changed(self) -> None:
+        """Switch between the existing SO/Site Group flow and attribute checking."""
+        check_attribute = self.stage1_check_attribute.get()
+        self.pending_etl = None
+        self.pending_discounts = []
+        self.check_oa_button.state(["disabled"])
+        self.add_sitegroup_button.state(["disabled"])
+        self.export_src_button.state(["disabled"])
+        self.report_button.state(["disabled"])
+        self.finish_discount_button.state(["disabled"])
+
+        if check_attribute:
+            self.check_oa_button.pack_forget()
+            self.add_sitegroup_button.pack_forget()
+            self.stage1_validate_button.config(text="Validate Pipeline")
+            self.stage1_status.config(
+                text="Check Attribute enabled: source must already contain complete SITE GROUP and SO values."
+            )
+        else:
+            self.check_oa_button.pack(side="left", before=self.template_mapping_button)
+            self.add_sitegroup_button.pack(
+                side="left", padx=(8, 0), before=self.template_mapping_button
+            )
+            self.stage1_validate_button.config(text="Validate Pipeline / Get SO")
+            self.stage1_status.config(
+                text="Select the Gold Promo source and Master data file, then run."
+            )
+        self._update_template_mapping_button()
 
     def _update_template_mapping_button(self, *_args) -> None:
         """Allow direct template creation once source input files are selected."""
@@ -760,26 +804,28 @@ class GoldPromoApp:
             latest_codes = add_excluded_sitegroup(code, state_path)
         self._sync_excluded_sitegroup_ui(latest_codes)
 
-    def _choose_attribute_sheet(self, path: Path) -> str | None:
-        """Show a modal selector for the worksheet to use as Attribute data."""
+    def _choose_workbook_sheet(self, path: Path, file_label: str) -> str | None:
+        """Show a modal selector for a workbook's input worksheet."""
         try:
             sheet_names = pd.ExcelFile(path).sheet_names
         except Exception as error:
-            messagebox.showerror("Attribute file", f"Cannot read workbook sheets:\n{error}")
+            messagebox.showerror(file_label, f"Cannot read workbook sheets:\n{error}")
             return None
         if not sheet_names:
-            messagebox.showerror("Attribute file", "The workbook has no worksheets.")
+            messagebox.showerror(file_label, "The workbook has no worksheets.")
             return None
 
         dialog = Toplevel(self.root)
-        dialog.title("Select Attribute Sheet")
+        dialog.title(f"Select {file_label} Sheet")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
         selected_sheet = StringVar(value=sheet_names[0])
         result = {"sheet": None}
 
-        ttk.Label(dialog, text="Attribute sheet").grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
+        ttk.Label(dialog, text=f"{file_label} sheet — {path.name}").grid(
+            row=0, column=0, padx=12, pady=(12, 6), sticky="w"
+        )
         selector = ttk.Combobox(dialog, textvariable=selected_sheet, values=sheet_names, state="readonly", width=42)
         selector.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="ew")
         selector.focus_set()
@@ -797,6 +843,12 @@ class GoldPromoApp:
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         self.root.wait_window(dialog)
         return result["sheet"]
+
+    def _choose_attribute_sheet(self, path: Path) -> str | None:
+        return self._choose_workbook_sheet(path, "Attribute")
+
+    def _choose_sale_price_sheet(self, path: Path) -> str | None:
+        return self._choose_workbook_sheet(path, "Sale Price")
 
     def _build_stage2(self) -> None:
         frame = self.stage2_frame
@@ -866,7 +918,15 @@ class GoldPromoApp:
             )
             yield self._group_output_dir(output, structure, file_name), grouped_etl
 
-    def _return_errors(self, sources: list[Path], data: pd.DataFrame, output: Path, stage: str, timestamp: str) -> bool:
+    def _return_errors(
+        self,
+        sources: list[Path],
+        data: pd.DataFrame,
+        output: Path,
+        stage: str,
+        timestamp: str,
+        source_sheets: dict[Path, str] | None = None,
+    ) -> bool:
         notes = data["NOTE ERR FROM MASTER DATA"].fillna("")
         if not notes.astype(str).str.strip().ne("").any():
             return False
@@ -883,7 +943,12 @@ class GoldPromoApp:
                 error_path = self._output_file(
                     group_output, f"{source.stem}_{stage}_errors", timestamp, suffix=".xlsx"
                 )
-                WorkbookExporter.write_source_errors(source, structure_errors, error_path)
+                WorkbookExporter.write_source_errors(
+                    source,
+                    structure_errors,
+                    error_path,
+                    (source_sheets or {}).get(source, "Template"),
+                )
                 error_paths.append(str(error_path))
         messagebox.showerror("Validation errors", "Processing stopped. Error source returned:\n" + "\n".join(error_paths))
         return True
@@ -958,11 +1023,27 @@ class GoldPromoApp:
                 sources,
                 master_data,
                 master_data,
+                check_attribute=self.stage1_check_attribute.get(),
             )
             etl._load_network()._load_src()
-            # Always discard old workflow values. Validate recreates SO now;
-            # Add Site Group recreates SITE GROUP in the following step.
-            etl.clear_so_and_sitegroup()
+            if self.stage1_check_attribute.get():
+                missing_columns = self._missing_sitegroup_or_so(etl)
+                if missing_columns:
+                    messagebox.showerror(
+                        "Check Attribute source is incomplete",
+                        "Check Attribute requires complete values in the source for: "
+                        + ", ".join(missing_columns)
+                        + ".",
+                        parent=self.root,
+                    )
+                    self.stage1_status.config(
+                        text="Stopped: Check Attribute requires existing SITE GROUP and SO values."
+                    )
+                    return
+                etl.should_generate_so_sitegroup = False
+            else:
+                # The normal workflow recreates SO and resolves SITE GROUP later.
+                etl.clear_so_and_sitegroup()
             etl._pipeline()._load_plan()
             if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                 self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
@@ -975,6 +1056,19 @@ class GoldPromoApp:
 
     def _complete_stage1_pipeline(self, etl: Template_ETL, output: Path, timestamp: str) -> None:
         try:
+            if etl.check_attribute:
+                self.pending_etl = etl
+                self.template_mapping_button.state(["!disabled"])
+                self.stage1_status.config(
+                    text="Validation with Check Attribute complete. You can create other templates."
+                )
+                messagebox.showinfo(
+                    "Pipeline complete",
+                    "Validation with Check Attribute is complete.\n\n"
+                    "You can now create the other templates.",
+                )
+                return
+
             self._export_non_warehouse(etl, output, timestamp)
             report_paths = [
                 self._export_gold_promo_network_report(grouped_etl, group_output, timestamp)
@@ -1111,11 +1205,20 @@ class GoldPromoApp:
         ]
 
     def _show_incomplete_template_source(self, missing_columns: list[str]) -> None:
+        if self.stage1_check_attribute.get():
+            guidance = (
+                ".\n\nCheck Attribute requires the selected source to already contain "
+                "complete SITE GROUP and SO values."
+            )
+        else:
+            guidance = (
+                ".\n\nRun Validate Pipeline, Check OA, and Add Site Group first, "
+                "then use the exported processed source."
+            )
         messagebox.showerror(
             "Other templates not ready",
             "Missing or incomplete values in: " + ", ".join(missing_columns)
-            + ".\n\nRun Validate Pipeline, Check OA, and Add Site Group first, "
-            "then use the exported processed source.",
+            + guidance,
             parent=self.root,
         )
 
@@ -1278,7 +1381,12 @@ class GoldPromoApp:
                 if sources is None or master_paths is None:
                     return
                 master_data = master_paths[0]
-                etl = Template_ETL(sources, master_data, master_data)
+                etl = Template_ETL(
+                    sources,
+                    master_data,
+                    master_data,
+                    check_attribute=self.stage1_check_attribute.get(),
+                )
                 etl._load_network()._load_src()
                 missing_columns = self._missing_sitegroup_or_so(etl)
                 if missing_columns:
@@ -1465,6 +1573,12 @@ class GoldPromoApp:
         sources = self._source_paths(self.stage2_source) if selected_files["Gold Promo source"] else []
         if selected_files["Gold Promo source"] and sources is None:
             return
+        source_sheets = {}
+        for source in sources:
+            selected_sheet = self._choose_sale_price_sheet(source)
+            if selected_sheet is None:
+                return
+            source_sheets[source] = selected_sheet
         attribute = Path(selected_files["Attribute file"]).expanduser() if selected_files["Attribute file"] else None
         attribute_sheet = self._choose_attribute_sheet(attribute) if attribute is not None else None
         if attribute is not None and attribute_sheet is None:
@@ -1478,8 +1592,15 @@ class GoldPromoApp:
         if sources:
             try:
                 source_etl = Template_ETL(sources, master_data, master_data)
-                source_etl._load_src_listoff()._pipeline2()._load_network()
-                if not self._return_errors(sources, source_etl.src_listoff, output, "stage2", timestamp):
+                source_etl._load_src_listoff(source_sheets)._pipeline2()._load_network()
+                if not self._return_errors(
+                    sources,
+                    source_etl.src_listoff,
+                    output,
+                    "stage2",
+                    timestamp,
+                    source_sheets,
+                ):
                     for (structure, file_name), data in source_etl.src_listoff.groupby(
                         ["STRUCTURE", "FILE NAME"], sort=False, dropna=False
                     ):
