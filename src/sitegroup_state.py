@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
-from src.data_file_paths import find_data_file_location
+from src.data_file_paths import GOLD_PROMO_SYSTEM_DIR
 
 DEFAULT_EXCLUDED_SITEGROUPS = (
     "8000", "8200", "8201", "8202", "8203", "8300", "8710", "8711", "8712",
@@ -29,7 +29,7 @@ def get_sitegroup_state_path(catalogue: str) -> Path | None:
     catalogue = str(catalogue).strip()
     if not catalogue:
         return None
-    return find_data_file_location(f"{catalogue}_sitegroup_state.json")
+    return GOLD_PROMO_SYSTEM_DIR / f"{catalogue}_sitegroup_state.json"
 
 
 def _required_state_path(path: Path | None) -> Path:

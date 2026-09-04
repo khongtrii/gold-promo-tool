@@ -12,9 +12,10 @@ DATA_FILE_SYSTEM_FOLDERS = (
     Path("Khong Minh Tri's files - gold_promo") / "data_file_system",
 )
 
-DEFAULT_MASTER_DATA_PATH = Path(
-    r"\\al-dc01\MasterData\MasterDataMacro\goldPromoSystem\master_data_metadata.xlsm"
+GOLD_PROMO_SYSTEM_DIR = Path(
+    r"\\al-dc01\MasterData\MasterDataMacro\goldPromoSystem"
 )
+DEFAULT_MASTER_DATA_PATH = GOLD_PROMO_SYSTEM_DIR / "master_data_metadata.xlsm"
 
 
 def get_onedrive_root() -> Path | None:
