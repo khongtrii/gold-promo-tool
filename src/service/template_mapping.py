@@ -1018,9 +1018,7 @@ class SalePrice(StageMixin):
         if self.src_attr is None:
             raise ValueError("Attribute data has not been loaded.")
         data = self.src_attr.copy()
-        note_count = data.groupby(["GOLD CODE", "SV"], dropna=False)[
-            "GOLD CODE"
-        ].transform("size")
+
 
         template_attr = pd.DataFrame({
             column_attr[0]: "0",
@@ -1034,8 +1032,14 @@ class SalePrice(StageMixin):
             column_attr[8]: "",
             column_attr[9]: data["START DATE"],
             column_attr[10]: data["END DATE"],
-            column_attr[11]: note_count,
         })
 
         self.template_attr = self.fast_stage(template_attr[column_attr], have_no=True)
+
+        note_count = self.template_attr.groupby([column_attr[1], column_attr[2]], dropna=False)[
+            column_attr[1]
+        ].transform("size")
+
+        self.template_attr[column_attr[11]] = note_count
+
         return self
