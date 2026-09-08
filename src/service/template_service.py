@@ -22,8 +22,15 @@ from src.constant.required import (
 
 class Template_ETL:
     GROUP_COLS: List[str] = ["FILE NAME", "GOLD CODE", "LV", "LU"]
+    DISCOUNT_NUMBER = r"\d+(?:[.,]\d+)?"
+    VALID_DISCOUNT = re.compile(
+        rf"^(?:{DISCOUNT_NUMBER}|{DISCOUNT_NUMBER}%|"
+        rf"{DISCOUNT_NUMBER}(?:T|TH)\+{DISCOUNT_NUMBER}(?:T|TH)|"
+        rf"{DISCOUNT_NUMBER}\+{DISCOUNT_NUMBER})$",
+        re.IGNORECASE,
+    )
     NON_WAREHOUSE_DISCOUNT = re.compile(
-        r"^\s*\d+(?:[.,]\d+)?\s*%?\s*\+\s*\d+(?:[.,]\d+)?\s*%?\s*$"
+        rf"^{DISCOUNT_NUMBER}\+{DISCOUNT_NUMBER}$"
     )
     ATTRIBUTE_COLUMNS = (
         "GOLD CODE",
@@ -507,9 +514,12 @@ class Template_ETL:
             )
             plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
             numeric_discount = pd.to_numeric(
-                discount_text.where(plain_discount), errors="coerce"
+                discount_text.where(plain_discount).map(self._normalize_decimal_number),
+                errors="coerce",
             )
-            invalid_discount = plain_discount & numeric_discount.isna()
+            invalid_discount = ~discount_text.str.fullmatch(
+                self.VALID_DISCOUNT, na=False
+            )
             self._append_note_err(
                 data,
                 data.index[invalid_discount],
@@ -1884,7 +1894,12 @@ class Template_ETL:
         The returned frame is a copy, so the primary source frame remains
         unchanged and continues through every existing template flow.
         """
-        discounts = data["DISCOUNT (% OR VALUE)"].fillna("").astype(str)
+        discounts = (
+            data["DISCOUNT (% OR VALUE)"]
+            .fillna("")
+            .astype(str)
+            .str.replace(r"\s+", "", regex=True)
+        )
         mask = discounts.str.fullmatch(cls.NON_WAREHOUSE_DISCOUNT, na=False)
         return data.loc[mask].copy()
 
