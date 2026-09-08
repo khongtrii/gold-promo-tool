@@ -19,8 +19,15 @@ DEFAULT_EXCLUDED_SITEGROUPS = (
     "99990", "99991", "99992", "99993", "99994",
     "99995", "99996", "99997", "99998", "99999",
 )
+DEFAULT_EXCEPTION_DISCOUNT_GOLD_CODES = (
+    "02043862",
+    "02043863",
+    "02047463",
+    "02047464",
+)
 DEFAULT_SITEGROUP_STATE = {
     "EXC_SITE_GROUP": list(DEFAULT_EXCLUDED_SITEGROUPS),
+    "EXCEPTION_DISCOUNT_GC": list(DEFAULT_EXCEPTION_DISCOUNT_GOLD_CODES),
     "ACTIVE": "no",
 }
 
@@ -60,6 +67,24 @@ def _normalize_state(state) -> tuple[dict, bool]:
     if normalized.get("EXC_SITE_GROUP") != codes:
         changed = True
     normalized["EXC_SITE_GROUP"] = codes
+
+    raw_discount_codes = normalized.get(
+        "EXCEPTION_DISCOUNT_GC",
+        list(DEFAULT_EXCEPTION_DISCOUNT_GOLD_CODES),
+    )
+    if not isinstance(raw_discount_codes, list):
+        raw_discount_codes = list(DEFAULT_EXCEPTION_DISCOUNT_GOLD_CODES)
+        changed = True
+    discount_codes = []
+    seen_discount_codes = set()
+    for value in raw_discount_codes:
+        code = str(value).strip()
+        if code and code not in seen_discount_codes:
+            discount_codes.append(code)
+            seen_discount_codes.add(code)
+    if normalized.get("EXCEPTION_DISCOUNT_GC") != discount_codes:
+        changed = True
+    normalized["EXCEPTION_DISCOUNT_GC"] = discount_codes
 
     if normalized.get("ACTIVE") not in {"yes", "no"}:
         normalized["ACTIVE"] = "no"
@@ -201,6 +226,35 @@ def remove_excluded_sitegroup(code: str, path: Path | None = None) -> list[str]:
         current["EXC_SITE_GROUP"] = [value for value in current["EXC_SITE_GROUP"] if value != code]
 
     return list(_update_state(remove, path)["EXC_SITE_GROUP"])
+
+
+def get_exception_discount_gold_codes(path: Path | None = None) -> list[str]:
+    return list(load_sitegroup_state(path)["EXCEPTION_DISCOUNT_GC"])
+
+
+def add_exception_discount_gold_code(code: str, path: Path | None = None) -> list[str]:
+    code = str(code).strip()
+    if not code:
+        return get_exception_discount_gold_codes(path)
+
+    state = _update_state(
+        lambda current: current["EXCEPTION_DISCOUNT_GC"].append(code)
+        if code not in current["EXCEPTION_DISCOUNT_GC"]
+        else None,
+        path,
+    )
+    return list(state["EXCEPTION_DISCOUNT_GC"])
+
+
+def remove_exception_discount_gold_code(code: str, path: Path | None = None) -> list[str]:
+    code = str(code).strip()
+
+    def remove(current: dict) -> None:
+        current["EXCEPTION_DISCOUNT_GC"] = [
+            value for value in current["EXCEPTION_DISCOUNT_GC"] if value != code
+        ]
+
+    return list(_update_state(remove, path)["EXCEPTION_DISCOUNT_GC"])
 
 
 def get_active_status(path: Path | None = None) -> str:

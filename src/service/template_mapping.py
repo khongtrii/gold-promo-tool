@@ -702,13 +702,23 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
 
         store_minigo = etl.dict_network.get("store_minigo", [])
         wh = etl.dict_network.get("wh", [])
+        warehouse_exception = (
+            template_ag_raw["GOLD CODE"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .isin(etl.exception_discount_gold_codes)
+        )
 
         mask_ok = (
             template_ag_raw["DISCOUNT TYPE"].isin(["1", "2"])
             | (
                 template_ag_raw["DISCOUNT TYPE"].eq("3")
-                & template_ag_raw["DISCOUNT VALUE"].astype(str).str.contains(
-                    r"T|TH", case=False, na=False
+                & (
+                    template_ag_raw["DISCOUNT VALUE"].astype(str).str.contains(
+                        r"T|TH", case=False, na=False
+                    )
+                    | warehouse_exception
                 )
             )
         )

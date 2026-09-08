@@ -73,6 +73,7 @@ class Template_ETL:
         path_attribute=None,
         non_suggested_sitegroup_codes=None,
         excluded_sitegroup_codes=None,
+        exception_discount_gold_codes=None,
         check_attribute=False,
     ):
         if path_src is None:
@@ -104,6 +105,11 @@ class Template_ETL:
         self.non_suggested_sitegroup_codes = {
             str(code).strip()
             for code in (reserved_sitegroup_codes or [])
+            if str(code).strip()
+        }
+        self.exception_discount_gold_codes = {
+            str(code).strip()
+            for code in (exception_discount_gold_codes or [])
             if str(code).strip()
         }
 
@@ -1883,12 +1889,19 @@ class Template_ETL:
         ]
 
         self.src = data[mask]
-        self.non_warehouse_src = self._get_non_warehouse_src(self.src)
+        self.non_warehouse_src = self._get_non_warehouse_src(
+            self.src,
+            self.exception_discount_gold_codes,
+        )
 
         return self
 
     @classmethod
-    def _get_non_warehouse_src(cls, data: pd.DataFrame) -> pd.DataFrame:
+    def _get_non_warehouse_src(
+        cls,
+        data: pd.DataFrame,
+        exception_discount_gold_codes=None,
+    ) -> pd.DataFrame:
         """Return ``n+m`` discount rows that do not use T/TH notation.
 
         The returned frame is a copy, so the primary source frame remains
@@ -1901,6 +1914,14 @@ class Template_ETL:
             .str.replace(r"\s+", "", regex=True)
         )
         mask = discounts.str.fullmatch(cls.NON_WAREHOUSE_DISCOUNT, na=False)
+        exception_codes = {
+            str(code).strip()
+            for code in (exception_discount_gold_codes or [])
+            if str(code).strip()
+        }
+        if exception_codes and "GOLD CODE" in data.columns:
+            gold_codes = data["GOLD CODE"].fillna("").astype(str).str.strip()
+            mask &= ~gold_codes.isin(exception_codes)
         return data.loc[mask].copy()
 
     def _pipeline2(self) -> "Template_ETL":

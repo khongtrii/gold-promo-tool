@@ -26,10 +26,13 @@ from src.service.template_mapping import Discount, SalePrice, Template_Mapping
 from src.service.template_service import Template_ETL
 from src.data_file_paths import default_master_data_path
 from src.sitegroup_state import (
+    add_exception_discount_gold_code,
     add_excluded_sitegroup,
+    get_exception_discount_gold_codes,
     get_excluded_sitegroups,
     get_sitegroup_state_path,
     load_sitegroup_state,
+    remove_exception_discount_gold_code,
     remove_excluded_sitegroup,
     set_active_status,
     try_acquire_active_status,
@@ -608,6 +611,12 @@ class GoldPromoApp:
         self._file_row(frame, 1, "Master data file", self.stage1_master_data, excel_files)
         self._directory_row(frame, 2, self.stage1_output)
 
+        ttk.Button(
+            frame,
+            text="Exception Discount GC",
+            command=self.show_exception_discount_gold_codes,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 2))
+
         excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes not used for suggestions", padding=8)
         excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
         excluded_frame.columnconfigure(0, weight=1)
@@ -737,6 +746,94 @@ class GoldPromoApp:
     def _non_suggested_sitegroup_codes(self) -> list[str]:
         state_path = self._sitegroup_state_path()
         return get_excluded_sitegroups(state_path) if state_path is not None else []
+
+    def _load_discount_exceptions(self, etl: Template_ETL) -> list[str]:
+        state_path = self._sitegroup_state_path(etl)
+        if state_path is None:
+            return []
+        codes = get_exception_discount_gold_codes(state_path)
+        etl.exception_discount_gold_codes = set(codes)
+        return codes
+
+    def show_exception_discount_gold_codes(self) -> None:
+        state_path = self._sitegroup_state_path()
+        if state_path is None:
+            messagebox.showerror(
+                "Catalogue required",
+                "Run Validate Pipeline to identify the catalogue first.",
+                parent=self.root,
+            )
+            return
+
+        dialog = Toplevel(self.root)
+        dialog.title("Exception Discount GC")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        content = ttk.Frame(dialog, padding=12)
+        content.pack(fill="both", expand=True)
+        ttk.Label(
+            content,
+            text="GOLD CODE dùng discount số + số nhưng vẫn được cài cho warehouse",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        code_input = StringVar()
+        entry = ttk.Entry(content, textvariable=code_input, width=34)
+        entry.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        code_list = Listbox(content, height=10, width=34, selectmode="extended")
+        code_list.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+
+        def sync(codes: list[str]) -> None:
+            code_list.delete(0, "end")
+            for code in codes:
+                code_list.insert("end", code)
+            if self.pending_etl is not None:
+                self.pending_etl.exception_discount_gold_codes = set(codes)
+
+        def add_codes() -> None:
+            codes = [
+                code.strip()
+                for code in re.split(r"[;,\s]+", code_input.get())
+                if code.strip()
+            ]
+            invalid = [code for code in codes if not re.fullmatch(r"\d{8}", code)]
+            if invalid:
+                messagebox.showerror(
+                    "Invalid GOLD CODE",
+                    "GOLD CODE phải gồm đúng 8 chữ số:\n" + "\n".join(invalid),
+                    parent=dialog,
+                )
+                return
+            try:
+                latest = get_exception_discount_gold_codes(state_path)
+                for code in codes:
+                    latest = add_exception_discount_gold_code(code, state_path)
+                sync(latest)
+                code_input.set("")
+            except Exception as error:
+                messagebox.showerror("Update failed", str(error), parent=dialog)
+
+        def remove_codes() -> None:
+            selected = [code_list.get(index) for index in code_list.curselection()]
+            try:
+                latest = get_exception_discount_gold_codes(state_path)
+                for code in selected:
+                    latest = remove_exception_discount_gold_code(code, state_path)
+                sync(latest)
+            except Exception as error:
+                messagebox.showerror("Update failed", str(error), parent=dialog)
+
+        ttk.Button(content, text="+", width=3, command=add_codes).grid(row=1, column=1)
+        ttk.Button(content, text="−", width=3, command=remove_codes).grid(
+            row=1, column=2, padx=(6, 0)
+        )
+        try:
+            sync(get_exception_discount_gold_codes(state_path))
+        except Exception as error:
+            dialog.destroy()
+            messagebox.showerror("Load failed", str(error), parent=self.root)
+            return
+        entry.focus_set()
 
     def _sitegroup_state_path(self, etl: Template_ETL | None = None) -> Path | None:
         current_etl = etl or self.pending_etl
@@ -1029,6 +1126,7 @@ class GoldPromoApp:
                 check_attribute=self.stage1_check_attribute.get(),
             )
             etl._load_network()._load_src()
+            self._load_discount_exceptions(etl)
             if self.stage1_check_attribute.get():
                 missing_columns = self._missing_sitegroup_or_so(etl)
                 if missing_columns:
@@ -1391,6 +1489,7 @@ class GoldPromoApp:
                     check_attribute=self.stage1_check_attribute.get(),
                 )
                 etl._load_network()._load_src()
+                self._load_discount_exceptions(etl)
                 missing_columns = self._missing_sitegroup_or_so(etl)
                 if missing_columns:
                     self._show_incomplete_template_source(missing_columns)

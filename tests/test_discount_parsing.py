@@ -43,6 +43,15 @@ class DiscountParsingTest(unittest.TestCase):
     def test_only_plain_number_plus_number_is_non_warehouse(self):
         data = pd.DataFrame(
             {
+                "GOLD CODE": [
+                    "NORMAL",
+                    "NORMAL",
+                    "NORMAL",
+                    "NORMAL",
+                    "NORMAL",
+                    "NORMAL",
+                    "NORMAL",
+                ],
                 "DISCOUNT (% OR VALUE)": [
                     "10+2",
                     "10 + 2",
@@ -58,6 +67,18 @@ class DiscountParsingTest(unittest.TestCase):
         result = Template_ETL._get_non_warehouse_src(data)
 
         self.assertEqual(result.index.tolist(), [0, 1])
+
+    def test_warehouse_exception_is_not_reported_as_non_warehouse(self):
+        data = pd.DataFrame(
+            {
+                "GOLD CODE": ["02043862", "99999999"],
+                "DISCOUNT (% OR VALUE)": ["10+2", "10+2"],
+            }
+        )
+
+        result = Template_ETL._get_non_warehouse_src(data, {"02043862"})
+
+        self.assertEqual(result["GOLD CODE"].tolist(), ["99999999"])
 
 
 if __name__ == "__main__":
