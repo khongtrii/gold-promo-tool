@@ -158,30 +158,28 @@ class AllocationMixin:
 
 
 class AttributeMapMixin:
-    """Map MEDIUM (free text) -> category chuẩn hoá bằng regex."""
+    """Map MEDIUM (free text) to the upload category code."""
 
     CATEGORY_RULES: Optional[List] = [
-        (
-            re.compile(r"(?i)\b(hero|front\s*page|back\s*page|unbeat)\b"),
-            "HERO",
-        ),
+        (re.compile(r"(?i)\bfront\s*page\b"), 1),
+        (re.compile(r"(?i)\bback\s*page\b"), 2),
+        (re.compile(r"(?i)\bunbeat\b"), 3),
+        (re.compile(r"(?i)\bhero\b"), 4),
+        (re.compile(r"(?i)\b(?:star|buy\s*more\s*save\s*more)\b"), 5),
+        (re.compile(r"(?i)\bmodel\b"), 6),
         (
             re.compile(
                 r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"
             ),
-            "CATA",
+            7,
         ),
         (
             re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"),
-            "COMPLE",
-        ),
-        (
-            re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"),
-            "STAR",
+            8,
         ),
     ]
 
-    def attribute_map(self, text: str) -> str:
+    def attribute_map(self, text: str):
         if not text:
             return text
 
@@ -268,12 +266,12 @@ class PromotionPlanMixin:
 
         template_promotion_plan = {
             column_promotion_plan[0]: data["SO"],
-            column_promotion_plan[1]: f"{self.cata} {self.cata_description} ({self.cata_period})",
+            column_promotion_plan[1]: self.cata_description,
             column_promotion_plan[2]: f"{self.cata}D",
             column_promotion_plan[3]: data["SITE GROUP"],
             column_promotion_plan[4]: "1",
-            # ``_load_plan`` normalizes these source date columns to the
-            # output date format before the mapping layer is invoked.
+            # Keep these as real date values; WorkbookExporter applies the
+            # unambiguous DD/MM/YYYY Excel display format.
             column_promotion_plan[5]: self.plan["CATALOGUE START DATE"].iloc[0],
             column_promotion_plan[6]: self.plan["CATALOGUE END DATE"].iloc[0],
             column_promotion_plan[7]: self.plan["GLOBAL PERIOD START"].iloc[0],
@@ -368,7 +366,17 @@ class SOCalendarMixin(CalendarMixin):
             column_so_calendar[7]: data["LU"],
             "%DELI": data[
                 ["% DELIVERY 1", "% DELIVERY 2", "% DELIVERY 3"]
-            ].values.tolist(),
+            ]
+            .apply(
+                lambda column: column.map(
+                    lambda value: (
+                        value
+                        if pd.isna(value)
+                        else str(value).strip().replace("%", "").strip()
+                    )
+                )
+            )
+            .values.tolist(),
             column_so_calendar[-2]: "10",
             column_so_calendar[-1]: "",
             "DELIVERY TYPE": data["DELIVERY TYPE"],

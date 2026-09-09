@@ -10,9 +10,17 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
-from src.data_file_paths import GOLD_PROMO_SYSTEM_DIR
-
 DEFAULT_EXCLUDED_SITEGROUPS = (
+    "101", "102", "103", "104", "106", "107", "108", "109", "110", "111",
+    "112", "113", "114", "115", "116", "117", "118", "119", "120", "121",
+    "122", "123", "124", "125", "126", "127", "128", "129", "130", "131",
+    "132", "133", "134", "135", "136", "137", "138", "139", "140", "141",
+    "142", "143", "144", "145", "146", "147", "150", "151", "152", "153",
+    "154", "155", "156", "157",
+    "1500", "1501", "1502", "1503", "1504", "1505", "1506", "1507", "1508",
+    "1509", "1510", "1511", "1512", "1513", "1514", "1515", "1516", "1517",
+    "801", "802", "804", "806", "809", "901", "902", "903", "904", "905",
+    "906", "907",
     "8000", "8200", "8201", "8202", "8203", "8300", "8710", "8711", "8712",
     "8210", "8220", "8230", "8310", "8320", "8330",
     "1100", "1200", "1300", "2100", "2200", "2300",
@@ -32,11 +40,15 @@ DEFAULT_SITEGROUP_STATE = {
 }
 
 
-def get_sitegroup_state_path(catalogue: str) -> Path | None:
+def get_sitegroup_state_path(
+    catalogue: str,
+    metadata_path: str | Path | None,
+) -> Path | None:
     catalogue = str(catalogue).strip()
-    if not catalogue:
+    if not catalogue or metadata_path is None:
         return None
-    return GOLD_PROMO_SYSTEM_DIR / f"{catalogue}_sitegroup_state.json"
+    metadata_path = Path(metadata_path).expanduser()
+    return metadata_path.parent / f"{catalogue}_sitegroup_state.json"
 
 
 def _required_state_path(path: Path | None) -> Path:

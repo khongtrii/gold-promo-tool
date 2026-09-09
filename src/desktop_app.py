@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 from copy import copy
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import BooleanVar, Listbox, Tk, StringVar, Toplevel, filedialog, messagebox, ttk
 
@@ -67,31 +67,54 @@ TEMPLATE_EXPORT_LABELS = {
 class WorkbookExporter:
     """Writes outputs while retaining the input workbook for error returns."""
 
-    @staticmethod
-    def save_with_excel(path: Path) -> None:
-        """Open and save an output through Excel to finalize its file format."""
-        excel = None
+    _excel = None
+
+    @classmethod
+    def _excel_application(cls):
+        if cls._excel is None:
+            cls._excel = win32.DispatchEx("Excel.Application")
+            cls._excel.Visible = False
+            cls._excel.DisplayAlerts = False
+            cls._excel.ScreenUpdating = False
+            cls._excel.EnableEvents = False
+        return cls._excel
+
+    @classmethod
+    def close_excel(cls) -> None:
+        if cls._excel is None:
+            return
+        try:
+            cls._excel.Quit()
+        finally:
+            cls._excel = None
+
+    @classmethod
+    def save_with_excel(cls, path: Path) -> None:
+        """Finalize every worksheet as text through one shared Excel instance."""
         workbook = None
         try:
-            excel = win32.DispatchEx("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
+            excel = cls._excel_application()
             workbook = excel.Workbooks.Open(str(path.resolve()))
+            for worksheet in workbook.Worksheets:
+                worksheet.Cells.NumberFormat = "@"
             workbook.Save()
         finally:
             if workbook is not None:
-                workbook.Close(SaveChanges=True)
-            if excel is not None:
-                excel.Quit()
+                workbook.Close(SaveChanges=False)
 
     @staticmethod
-    def write_template(data: pd.DataFrame | None, path: Path) -> None:
+    def write_template(
+        data: pd.DataFrame | None,
+        path: Path,
+        *,
+        finalize_with_excel: bool = False,
+    ) -> None:
         if data is None:
             return
         workbook = xlwt.Workbook()
         sheet = workbook.add_sheet("Template")
         header_style = xlwt.easyxf("font: bold on; align: horiz center")
-        default_style = xlwt.Style.default_style
+        text_style = xlwt.easyxf(num_format_str="@")
 
         for column, name in enumerate(data.columns):
             sheet.write(0, column, str(name), header_style)
@@ -99,18 +122,23 @@ class WorkbookExporter:
 
         for row, values in enumerate(data.itertuples(index=False, name=None), start=1):
             for column, value in enumerate(values):
-                sheet.write(row, column, WorkbookExporter._excel_value(value), default_style)
+                sheet.write(row, column, WorkbookExporter._excel_value(value), text_style)
 
         workbook.save(str(path))
-        WorkbookExporter.save_with_excel(path)
+        if finalize_with_excel:
+            WorkbookExporter.save_with_excel(path)
+
+    @staticmethod
+    def _is_date_value(value) -> bool:
+        return isinstance(value, (pd.Timestamp, datetime, date))
 
     @staticmethod
     def _excel_value(value):
         if value is None or pd.isna(value):
             return ""
-        if isinstance(value, pd.Timestamp):
-            return value.to_pydatetime()
-        return value
+        if WorkbookExporter._is_date_value(value):
+            return pd.Timestamp(value).strftime("%d/%m/%Y")
+        return str(value)
 
     @staticmethod
     def write_source_errors(
@@ -155,7 +183,6 @@ class WorkbookExporter:
 
         source_workbook.save(str(output_path))
         source_workbook.close()
-        WorkbookExporter.save_with_excel(output_path)
 
     @staticmethod
     def write_processed_source(
@@ -239,7 +266,6 @@ class WorkbookExporter:
             workbook.save(output_path)
         finally:
             workbook.close()
-        WorkbookExporter.save_with_excel(output_path)
 
     @staticmethod
     def write_attribute_errors(
@@ -275,7 +301,6 @@ class WorkbookExporter:
             workbook.save(output_path)
         finally:
             workbook.close()
-        WorkbookExporter.save_with_excel(output_path)
 
 
 class SiteGroupReview:
@@ -451,7 +476,6 @@ class SiteGroupReview:
         rows = [self.tree.item(item, "values") for item in self.tree.get_children()]
         try:
             pd.DataFrame(rows, columns=columns).to_excel(path, index=False, sheet_name="Site Group Review")
-            WorkbookExporter.save_with_excel(Path(path))
             messagebox.showinfo("Site Group review saved", f"Saved review file:\n{path}", parent=self.window)
         except Exception as error:
             messagebox.showerror("Save failed", f"Cannot save the review file:\n{error}", parent=self.window)
@@ -503,6 +527,8 @@ class GoldPromoApp:
             style="Version.TLabel",
         )
         self.version_label.place(relx=1.0, x=-10, y=5, anchor="ne")
+        self.refresh_button = ttk.Button(root, text="Refresh", command=self.refresh_application)
+        self.refresh_button.place(relx=1.0, x=-10, y=30, anchor="ne")
 
         self.stage1_source = StringVar()
         self.stage1_master_data = StringVar(
@@ -538,6 +564,51 @@ class GoldPromoApp:
         self._refresh_excluded_sitegroups()
         self.root.protocol("WM_DELETE_WINDOW", self._close_application)
         self.version_label.lift()
+        self.refresh_button.lift()
+
+    def refresh_application(self) -> None:
+        """Clear loaded inputs and discard all in-memory workflow state."""
+        try:
+            self._release_sitegroup_session()
+        except Exception as error:
+            messagebox.showwarning(
+                "Site Group state",
+                f"Could not release the Site Group state cleanly:\n{error}",
+                parent=self.root,
+            )
+        self.pending_etl = None
+        self.pending_discounts = []
+
+        self.stage1_source.set("")
+        self.stage1_master_data.set("")
+        self.stage1_output.set("")
+        self.stage1_check_attribute.set(False)
+        self.non_suggested_sitegroup_input.set("")
+        self.non_suggested_sitegroup_list.delete(0, "end")
+        self.report_ag.set("")
+
+        self.stage2_source.set("")
+        self.stage2_master_data.set("")
+        self.stage2_attribute.set("")
+        self.stage2_output.set("")
+
+        self.check_oa_button.state(["disabled"])
+        self.add_sitegroup_button.state(["disabled"])
+        self.template_mapping_button.state(["disabled"])
+        self.export_src_button.state(["disabled"])
+        self.report_button.state(["disabled"])
+        self.finish_discount_button.state(["disabled"])
+        self.check_oa_button.pack(side="left", before=self.template_mapping_button)
+        self.add_sitegroup_button.pack(
+            side="left", padx=(8, 0), before=self.template_mapping_button
+        )
+        self.stage1_validate_button.config(text="Validate Pipeline / Get SO")
+        self.stage1_status.config(
+            text="Select the Gold Promo source and Master data file, then run."
+        )
+        self.stage2_status.config(
+            text="Select a Gold Promo source, an Attribute file, or both."
+        )
 
     @staticmethod
     def _choose_file(variable: StringVar, filetypes: list[tuple[str, str]]) -> None:
@@ -837,9 +908,9 @@ class GoldPromoApp:
 
     def _sitegroup_state_path(self, etl: Template_ETL | None = None) -> Path | None:
         current_etl = etl or self.pending_etl
-        if current_etl is None or not current_etl.cata:
+        if current_etl is None or not current_etl.cata or current_etl.path_plan is None:
             return None
-        return get_sitegroup_state_path(current_etl.cata)
+        return get_sitegroup_state_path(current_etl.cata, current_etl.path_plan)
 
     def _sync_excluded_sitegroup_ui(self, codes: list[str]) -> None:
         current_codes = list(self.non_suggested_sitegroup_list.get(0, "end"))
@@ -883,7 +954,10 @@ class GoldPromoApp:
         try:
             self._release_sitegroup_session()
         finally:
-            self.root.destroy()
+            try:
+                WorkbookExporter.close_excel()
+            finally:
+                self.root.destroy()
 
     def _record_used_sitegroups(self, etl: Template_ETL) -> None:
         """Add this run's Site Groups to the user-maintained reservation list."""
@@ -1208,7 +1282,11 @@ class GoldPromoApp:
             for group_output, grouped_etl in self._stage1_groups(etl, output):
                 mapping = Template_Mapping(grouped_etl)._create_check_oa()
                 output_path = self._output_file(group_output, "template_check_oa", timestamp)
-                WorkbookExporter.write_template(mapping.template_check_oa, output_path)
+                WorkbookExporter.write_template(
+                    mapping.template_check_oa,
+                    output_path,
+                    finalize_with_excel=True,
+                )
                 output_paths.append(str(output_path))
             self.add_sitegroup_button.state(["!disabled"])
             self.stage1_status.config(text=f"Check OA files created in {len(output_paths)} output folder(s).")
@@ -1527,7 +1605,9 @@ class GoldPromoApp:
                         continue
                     result = getattr(mapping, f"_create_{method_name}")()
                     WorkbookExporter.write_template(
-                        getattr(result, attribute), self._output_file(group_output, attribute, timestamp)
+                        getattr(result, attribute),
+                        self._output_file(group_output, attribute, timestamp),
+                        finalize_with_excel=True,
                     )
 
                 if create_template_ag:
@@ -1541,6 +1621,7 @@ class GoldPromoApp:
                     WorkbookExporter.write_template(
                         discount.template_ag,
                         self._output_file(group_output, "template_ag", timestamp),
+                        finalize_with_excel=True,
                     )
                     pending_discounts.append((group_output, discount))
             self._record_used_sitegroups(etl)
@@ -1639,9 +1720,21 @@ class GoldPromoApp:
                         )
 
                 discount = discount._create_dc()._create_de()
-                WorkbookExporter.write_template(discount.template_dc_free, self._output_file(group_output, "template_dc_free", timestamp))
-                WorkbookExporter.write_template(discount.template_dc_money, self._output_file(group_output, "template_dc_money", timestamp))
-                WorkbookExporter.write_template(discount.template_de, self._output_file(group_output, "template_de", timestamp))
+                WorkbookExporter.write_template(
+                    discount.template_dc_free,
+                    self._output_file(group_output, "template_dc_free", timestamp),
+                    finalize_with_excel=True,
+                )
+                WorkbookExporter.write_template(
+                    discount.template_dc_money,
+                    self._output_file(group_output, "template_dc_money", timestamp),
+                    finalize_with_excel=True,
+                )
+                WorkbookExporter.write_template(
+                    discount.template_de,
+                    self._output_file(group_output, "template_de", timestamp),
+                    finalize_with_excel=True,
+                )
             self.stage1_status.config(text=f"Discount templates complete. Output: {output}")
             messagebox.showinfo("Discount complete", "Discount configuration templates were created.")
         except Exception as error:
@@ -1711,7 +1804,11 @@ class GoldPromoApp:
                         group_output = self._group_output_dir(output, structure, file_name)
                         sale_price = SalePrice(grouped_etl)._create_sp()
                         output_path = self._output_file(group_output, "template_sale_price", timestamp)
-                        WorkbookExporter.write_template(sale_price.template_sp, output_path)
+                        WorkbookExporter.write_template(
+                            sale_price.template_sp,
+                            output_path,
+                            finalize_with_excel=True,
+                        )
                         created.append(str(output_path))
             except Exception as error:
                 messagebox.showerror("Sale Price processing failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
@@ -1736,6 +1833,7 @@ class GoldPromoApp:
                     WorkbookExporter.write_template(
                         sale_price.template_attr,
                         check_path,
+                        finalize_with_excel=True,
                     )
 
                     upload_attr = sale_price.template_attr.drop(
@@ -1747,7 +1845,11 @@ class GoldPromoApp:
                         f"{attribute_prefix}_template_attr",
                         timestamp,
                     )
-                    WorkbookExporter.write_template(upload_attr, output_path)
+                    WorkbookExporter.write_template(
+                        upload_attr,
+                        output_path,
+                        finalize_with_excel=True,
+                    )
                     created.extend([str(check_path), str(output_path)])
             except Exception as error:
                 messagebox.showerror("Attribute processing failed", f"{error}\n\n{traceback.format_exc(limit=2)}")
