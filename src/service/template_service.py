@@ -49,7 +49,12 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
     )
     CATEGORY_RULES = (
-        (re.compile(r"(?i)\b(hero|front\s*page|back\s*page|unbeat)\b"), "HERO"),
+        (re.compile(r"(?i)\bfront\s*page\b"), "FRONT PAGE"),
+        (re.compile(r"(?i)\bback\s*page\b"), "BACK PAGE"),
+        (re.compile(r"(?i)\bunbeat\b"), "UNBEAT"),
+        (re.compile(r"(?i)\bhero\b"), "HERO"),
+        (re.compile(r"(?i)\b(?:star|buy\s*more\s*save\s*more)\b"), "STAR"),
+        (re.compile(r"(?i)\bmodel\b"), "MODEL"),
         (
             re.compile(
                 r"(?i)\b(cata|catalog(?:ue)?|fair|member\s*price|banner|exclusive\s*pack|family|other|normal|the\s*1)\b"
@@ -57,7 +62,6 @@ class Template_ETL:
             "CATA",
         ),
         (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLE"),
-        (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STAR"),
     )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
     ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
@@ -712,20 +716,11 @@ class Template_ETL:
         plan["GLOBAL PERIOD START"] = plan["CATALOGUE START DATE"] - pd.Timedelta(days=24)
         plan["GLOBAL PERIOD END"] = plan["CATALOGUE END DATE"]
 
-        plan["COMMITMENT DEADLINE"] = plan["CATALOGUE START DATE"] - pd.Timedelta(days=17)
         plan["COMMITMENT CLOSING"] = plan["GENERAL PO DATE (D-17)"]
+        plan["COMMITMENT DEADLINE"] = plan["COMMITMENT CLOSING"] - pd.Timedelta(days=1)
 
         plan["ORDER WAREHOUSE START"] = plan["CATALOGUE START DATE"] - pd.Timedelta(days=14)
         plan["ORDER WAREHOUSE END"] = plan["CATALOGUE END DATE"]
-
-        addition_date_columns = date_columns_plan + [
-            'SHOP ACTIVATION', 'GLOBAL PERIOD START', 'GLOBAL PERIOD END',
-            'COMMITMENT DEADLINE', 'COMMITMENT CLOSING', 'ORDER WAREHOUSE START',
-            'ORDER WAREHOUSE END'
-        ]
-        plan[addition_date_columns] = plan[addition_date_columns].apply(
-            lambda col: col.dt.strftime("%d/%m/%Y")
-        )
 
         self.plan = plan
 

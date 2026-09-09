@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 from copy import copy
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import BooleanVar, Listbox, Tk, StringVar, Toplevel, filedialog, messagebox, ttk
 
@@ -92,6 +92,7 @@ class WorkbookExporter:
         sheet = workbook.add_sheet("Template")
         header_style = xlwt.easyxf("font: bold on; align: horiz center")
         default_style = xlwt.Style.default_style
+        date_style = xlwt.easyxf(num_format_str="DD/MM/YYYY")
 
         for column, name in enumerate(data.columns):
             sheet.write(0, column, str(name), header_style)
@@ -99,10 +100,15 @@ class WorkbookExporter:
 
         for row, values in enumerate(data.itertuples(index=False, name=None), start=1):
             for column, value in enumerate(values):
-                sheet.write(row, column, WorkbookExporter._excel_value(value), default_style)
+                style = date_style if WorkbookExporter._is_date_value(value) else default_style
+                sheet.write(row, column, WorkbookExporter._excel_value(value), style)
 
         workbook.save(str(path))
         WorkbookExporter.save_with_excel(path)
+
+    @staticmethod
+    def _is_date_value(value) -> bool:
+        return isinstance(value, (pd.Timestamp, datetime, date))
 
     @staticmethod
     def _excel_value(value):
@@ -503,6 +509,8 @@ class GoldPromoApp:
             style="Version.TLabel",
         )
         self.version_label.place(relx=1.0, x=-10, y=5, anchor="ne")
+        self.refresh_button = ttk.Button(root, text="Refresh", command=self.refresh_application)
+        self.refresh_button.place(relx=1.0, x=-10, y=30, anchor="ne")
 
         self.stage1_source = StringVar()
         self.stage1_master_data = StringVar(
@@ -538,6 +546,51 @@ class GoldPromoApp:
         self._refresh_excluded_sitegroups()
         self.root.protocol("WM_DELETE_WINDOW", self._close_application)
         self.version_label.lift()
+        self.refresh_button.lift()
+
+    def refresh_application(self) -> None:
+        """Clear loaded inputs and discard all in-memory workflow state."""
+        try:
+            self._release_sitegroup_session()
+        except Exception as error:
+            messagebox.showwarning(
+                "Site Group state",
+                f"Could not release the Site Group state cleanly:\n{error}",
+                parent=self.root,
+            )
+        self.pending_etl = None
+        self.pending_discounts = []
+
+        self.stage1_source.set("")
+        self.stage1_master_data.set("")
+        self.stage1_output.set("")
+        self.stage1_check_attribute.set(False)
+        self.non_suggested_sitegroup_input.set("")
+        self.non_suggested_sitegroup_list.delete(0, "end")
+        self.report_ag.set("")
+
+        self.stage2_source.set("")
+        self.stage2_master_data.set("")
+        self.stage2_attribute.set("")
+        self.stage2_output.set("")
+
+        self.check_oa_button.state(["disabled"])
+        self.add_sitegroup_button.state(["disabled"])
+        self.template_mapping_button.state(["disabled"])
+        self.export_src_button.state(["disabled"])
+        self.report_button.state(["disabled"])
+        self.finish_discount_button.state(["disabled"])
+        self.check_oa_button.pack(side="left", before=self.template_mapping_button)
+        self.add_sitegroup_button.pack(
+            side="left", padx=(8, 0), before=self.template_mapping_button
+        )
+        self.stage1_validate_button.config(text="Validate Pipeline / Get SO")
+        self.stage1_status.config(
+            text="Select the Gold Promo source and Master data file, then run."
+        )
+        self.stage2_status.config(
+            text="Select a Gold Promo source, an Attribute file, or both."
+        )
 
     @staticmethod
     def _choose_file(variable: StringVar, filetypes: list[tuple[str, str]]) -> None:
