@@ -668,8 +668,8 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             self.template_ag_raw = pd.DataFrame(columns=[*column_ag, "DISCOUNT VALUE", "RAW START DATE", "RAW END DATE", "DISCOUNT TYPE", "CONTRACT"])
             return self
 
-        start_date = data["PP START DATE"].min()
-        end_date = data["PP END DATE"].max()
+        start_date = data["PP START DATE"] #.min()
+        end_date = data["PP END DATE"] #.max()
         if pd.isna(start_date) or pd.isna(end_date):
             raise ValueError("Discount processing requires valid PP START DATE and PP END DATE values.")
 
