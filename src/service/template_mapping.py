@@ -486,7 +486,7 @@ class POCommitmentMixin(AllocationMixin):
 
         template_po_commitment = pd.DataFrame(template_po_commitment)
 
-        template_po_commitment = template_po_commitment[column_po_commitment]
+        template_po_commitment = template_po_commitment[column_po_commitment+['SUPPLIER']]
 
         template_po_commitment = self.fast_stage(template_po_commitment, have_no=True)
 
