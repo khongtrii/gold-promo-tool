@@ -220,6 +220,7 @@ class BaseTemplate(ContractMixin, StageMixin):
         self.template_so_calendar: Optional[pd.DataFrame] = None
         self.template_purchase: Optional[pd.DataFrame] = None
         self.template_po_commitment: Optional[pd.DataFrame] = None
+        self.template_po_commitment_report: Optional[pd.DataFrame] = None
         self.template_supplier_schedule: Optional[pd.DataFrame] = None
         self.template_add_attribute_marketing: Optional[pd.DataFrame] = None
         
@@ -486,11 +487,15 @@ class POCommitmentMixin(AllocationMixin):
 
         template_po_commitment = pd.DataFrame(template_po_commitment)
 
-        template_po_commitment = template_po_commitment[column_po_commitment+['SUPPLIER']]
+        template_po_commitment_report = template_po_commitment[
+            column_po_commitment + ["SUPPLIER"]
+        ]
+        template_po_commitment = template_po_commitment[column_po_commitment]
 
-        template_po_commitment = self.fast_stage(template_po_commitment, have_no=True)
-
-        self.template_po_commitment = template_po_commitment
+        self.template_po_commitment = self.fast_stage(template_po_commitment, have_no=True)
+        self.template_po_commitment_report = self.fast_stage(
+            template_po_commitment_report, have_no=True
+        )
 
         return self
 

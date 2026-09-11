@@ -63,6 +63,19 @@ TEMPLATE_EXPORT_LABELS = {
     "template_ag": "Template AG",
 }
 
+# These templates are consumed in a fixed sequence by the downstream process.
+# Keep report files paired with their source template's sequence number.
+TEMPLATE_OUTPUT_ORDER = {
+    "template_promotion_plan": 1,
+    "template_update_so": 2,
+    "template_missing_ou": 3,
+    "template_so_calendar": 4,
+    "template_po_commitment": 5,
+    "template_po_commitment_report": 5,
+    "template_purchase": 6,
+    "template_supplier_schedule": 7,
+}
+
 
 class WorkbookExporter:
     """Writes outputs while retaining the input workbook for error returns."""
@@ -1067,7 +1080,9 @@ class GoldPromoApp:
 
     @staticmethod
     def _output_file(output: Path, name: str, timestamp: str, suffix: str = ".xls") -> Path:
-        return output / f"{name}_{timestamp}{suffix}"
+        order = TEMPLATE_OUTPUT_ORDER.get(name)
+        prefix = f"{order}_" if order is not None else ""
+        return output / f"{prefix}{name}_{timestamp}{suffix}"
 
     @staticmethod
     def _group_output_dir(output: Path, structure, file_name) -> Path:
@@ -1467,7 +1482,11 @@ class GoldPromoApp:
 
     def _request_template_exports(self) -> set[str] | None:
         """Let the user choose which configuration templates to create."""
-        template_names = [method_name for method_name, _attribute in TEMPLATE_EXPORTS]
+        template_names = [
+            method_name
+            for method_name, _attribute in TEMPLATE_EXPORTS
+            if method_name != "add_attribute_marketing" or self.stage1_check_attribute.get()
+        ]
         template_names.append("template_ag")
 
         dialog = Toplevel(self.root)
@@ -1609,6 +1628,16 @@ class GoldPromoApp:
                         self._output_file(group_output, attribute, timestamp),
                         finalize_with_excel=True,
                     )
+                    if method_name == "po_commitment":
+                        WorkbookExporter.write_template(
+                            result.template_po_commitment_report,
+                            self._output_file(
+                                group_output,
+                                "template_po_commitment_report",
+                                timestamp,
+                            ),
+                            finalize_with_excel=True,
+                        )
 
                 if create_template_ag:
                     group_row = grouped_etl.src.iloc[0]

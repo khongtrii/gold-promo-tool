@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from src.constant.template import column_promotion_plan
+from src.constant.template import column_po_commitment, column_promotion_plan
 from src.service.template_mapping import AttributeMapMixin, Template_Mapping
 
 
@@ -99,6 +99,43 @@ class SOCalendarMappingTest(unittest.TestCase):
             mapping.template_so_calendar["PCT WEIGHT"].tolist(),
             ["25", "35", "40"],
         )
+
+
+class POCommitmentMappingTest(unittest.TestCase):
+    def test_creates_supplier_free_template_and_supplier_report(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "SO": ["SO1"],
+                    "GOLD CODE": ["02043862"],
+                    "LV": ["1"],
+                    "LU": ["1"],
+                    "PURCHASE NETWORK EXPANDED": ["S1;S2"],
+                    "SUPPLIER CODE": ["SUP"],
+                    "S1": [12],
+                    "S2": [24],
+                }
+            ),
+            dict_network={"store": ["S1", "S2"]},
+            plan=pd.DataFrame(),
+            cata="C01",
+            cata_description="Catalogue description",
+            cata_period="Period",
+        )
+
+        mapping = Template_Mapping(etl)._create_po_commitment()
+
+        self.assertEqual(
+            mapping.template_po_commitment.columns.tolist(),
+            ["NO", *column_po_commitment],
+        )
+        self.assertNotIn("SUPPLIER", mapping.template_po_commitment.columns)
+        self.assertEqual(
+            mapping.template_po_commitment_report.columns.tolist(),
+            ["NO", *column_po_commitment, "SUPPLIER"],
+        )
+        self.assertEqual(mapping.template_po_commitment["QUANTITY"].tolist(), [12, 24])
+        self.assertEqual(mapping.template_po_commitment_report["SUPPLIER"].tolist(), ["SUP", "SUP"])
 
 
 if __name__ == "__main__":
