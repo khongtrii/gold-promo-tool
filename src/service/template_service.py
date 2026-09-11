@@ -484,7 +484,7 @@ class Template_ETL:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
             self._check_required_data(data, required_stage1)
-            self._restore_percentage_discounts(data, path)
+            self._restore_percentage_cells(data, path)
             converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
             attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
             for pattern, category in self.CATEGORY_RULES:
@@ -566,28 +566,35 @@ class Template_ETL:
         return self
 
     @staticmethod
-    def _restore_percentage_discounts(data: pd.DataFrame, path: Path) -> None:
-        """Keep Excel percentage cells as user-facing percentage discounts.
+    def _restore_percentage_cells(data: pd.DataFrame, path: Path) -> None:
+        """Restore selected percentage-formatted source cells to ``50%`` text.
 
-        Pandas reads an Excel cell such as ``10%`` as the numeric value
-        ``0.1``.  Discount templates require the original percentage form, so
-        recover it from the cell number format before validation.
+        Pandas returns an Excel percentage cell such as ``50%`` as ``0.5``
+        even with ``dtype=str``.  Read the source cell format so validation
+        and template generation receive the user-facing percentage value.
         """
-        column = "DISCOUNT (% OR VALUE)"
-        if column not in data.columns:
+        percentage_columns = (
+            "DISCOUNT (% OR VALUE)",
+            "% DELIVERY 1",
+            "% DELIVERY 2",
+            "% DELIVERY 3",
+        )
+        target_columns = [column for column in percentage_columns if column in data.columns]
+        if not target_columns:
             return
         workbook = load_workbook(path, read_only=True, data_only=True)
         try:
             worksheet = workbook["Template"]
             headers = [cell.value for cell in next(worksheet.iter_rows(min_row=7, max_row=7))]
-            if column not in headers:
-                return
-            column_index = headers.index(column) + 1
-            for dataframe_index, excel_row in zip(data.index, range(8, len(data) + 8)):
-                cell = worksheet.cell(excel_row, column_index)
-                if "%" not in str(cell.number_format) or not isinstance(cell.value, (int, float)):
+            for column in target_columns:
+                if column not in headers:
                     continue
-                data.at[dataframe_index, column] = f"{cell.value * 100:g}%"
+                column_index = headers.index(column) + 1
+                for dataframe_index, excel_row in zip(data.index, range(8, len(data) + 8)):
+                    cell = worksheet.cell(excel_row, column_index)
+                    if "%" not in str(cell.number_format) or not isinstance(cell.value, (int, float)):
+                        continue
+                    data.at[dataframe_index, column] = f"{cell.value * 100:g}%"
         finally:
             workbook.close()
 
@@ -601,7 +608,7 @@ class Template_ETL:
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_wh_discount)
             self._check_required_data(data, required_wh_discount)
-            self._restore_percentage_discounts(data, path)
+            self._restore_percentage_cells(data, path)
 
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"]
@@ -1093,19 +1100,43 @@ class Template_ETL:
 
     def _check_network(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
+        # This marker prevents dependent validation from treating a blocked
+        # network expression as an empty or mismatched expanded network.
+        data["_SKIP_NETWORK_CHECKS"] = False
 
         data["PURCHASE NETWORK"] = data["PURCHASE NETWORK"].map(self._normalize_network_punctuation)
         data["GOLD PROMO NETWORK"] = data["GOLD PROMO NETWORK"].map(self._normalize_network_punctuation)
 
-        data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"].map(self._extract_network)
-        data["GOLD PROMO NETWORK EXPANDED"] = data["GOLD PROMO NETWORK"].map(self._extract_network)
+        for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
+            rows = data.loc[idx]
+            uses_network_8000 = rows[
+                ["PURCHASE NETWORK", "GOLD PROMO NETWORK"]
+            ].fillna("").astype(str).apply(
+                lambda column: column.str.strip().eq("8000")
+            ).any().any()
+            if uses_network_8000:
+                data.loc[idx, "_SKIP_NETWORK_CHECKS"] = True
+                self._append_note_err(data, idx, "Không được sử dụng network 8000.")
+
+        active_rows = ~data["_SKIP_NETWORK_CHECKS"]
+        data["PURCHASE NETWORK EXPANDED"] = ""
+        data["GOLD PROMO NETWORK EXPANDED"] = ""
+        data.loc[active_rows, "PURCHASE NETWORK EXPANDED"] = data.loc[
+            active_rows, "PURCHASE NETWORK"
+        ].map(self._extract_network)
+        data.loc[active_rows, "GOLD PROMO NETWORK EXPANDED"] = data.loc[
+            active_rows, "GOLD PROMO NETWORK"
+        ].map(self._extract_network)
 
         valid_stores = set(self.dict_network.get("store", []))
 
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
+            if rows["_SKIP_NETWORK_CHECKS"].any():
+                continue
 
             messages = []
+            invalid_site_rule = False
             for source_column, expanded_column in (
                 ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"),
                 ("GOLD PROMO NETWORK", "GOLD PROMO NETWORK EXPANDED"),
@@ -1113,7 +1144,18 @@ class Template_ETL:
                 valid_rule = rows[source_column].map(self._has_valid_network_rule)
                 if (~valid_rule).any():
                     messages.append(f"{source_column} không đúng SITE RULE.")
+                    invalid_site_rule = True
 
+            if invalid_site_rule:
+                data.loc[idx, "_SKIP_NETWORK_CHECKS"] = True
+                self._append_note_err(data, idx, " | ".join(messages))
+                continue
+
+            for source_column, expanded_column in (
+                ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"),
+                ("GOLD PROMO NETWORK", "GOLD PROMO NETWORK EXPANDED"),
+            ):
+                valid_rule = rows[source_column].map(self._has_valid_network_rule)
                 has_adjustment = rows[source_column].astype(str).str.contains(
                     r"[+-]", regex=True, na=False
                 )
@@ -1159,6 +1201,13 @@ class Template_ETL:
         for _, related_indices in data.groupby(
             ["GOLD CODE", "LV"], dropna=False
         ).groups.items():
+            related_indices = pd.Index(related_indices)
+            if "_SKIP_NETWORK_CHECKS" in data.columns:
+                related_indices = related_indices[
+                    ~data.loc[related_indices, "_SKIP_NETWORK_CHECKS"]
+                ]
+            if related_indices.empty:
+                continue
             duplicates = set()
             for value in data.loc[related_indices, "PURCHASE NETWORK"]:
                 expanded_with_duplicates = self._parse_sites(
@@ -1179,6 +1228,8 @@ class Template_ETL:
 
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
+            if rows.get("_SKIP_NETWORK_CHECKS", pd.Series(False, index=rows.index)).any():
+                continue
 
             purchase_lists = [
                 self._unique_sorted_sites(value)

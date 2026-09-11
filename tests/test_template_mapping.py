@@ -1,10 +1,11 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
 from src.constant.template import column_po_commitment, column_promotion_plan
-from src.service.template_mapping import AttributeMapMixin, Template_Mapping
+from src.service.template_mapping import AttributeMapMixin, Discount, Template_Mapping
 
 
 class AttributeMediumMappingTest(unittest.TestCase):
@@ -136,6 +137,27 @@ class POCommitmentMappingTest(unittest.TestCase):
         )
         self.assertEqual(mapping.template_po_commitment["QUANTITY"].tolist(), [12, 24])
         self.assertEqual(mapping.template_po_commitment_report["SUPPLIER"].tolist(), ["SUP", "SUP"])
+
+
+class DiscountRawRestoreTest(unittest.TestCase):
+    def test_restores_exported_ag_raw_for_dc_de_generation(self):
+        raw = pd.DataFrame(
+            {
+                column: ["value"]
+                for column in Discount.RAW_COLUMNS
+            }
+        )
+
+        with patch("src.service.template_mapping.pd.read_excel", return_value=raw):
+            discount = Discount.from_ag_raw_file("template_ag_raw.xls")
+
+        self.assertIsNone(discount.etl)
+        self.assertTrue(discount.template_ag_raw.equals(raw))
+
+    def test_rejects_ag_raw_missing_processing_columns(self):
+        with patch("src.service.template_mapping.pd.read_excel", return_value=pd.DataFrame()):
+            with self.assertRaisesRegex(ValueError, "AG raw file is missing required columns"):
+                Discount.from_ag_raw_file("template_ag_raw.xls")
 
 
 if __name__ == "__main__":

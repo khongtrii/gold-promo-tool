@@ -551,6 +551,7 @@ class GoldPromoApp:
         self.stage1_check_attribute = BooleanVar(value=False)
         self.non_suggested_sitegroup_input = StringVar()
         self.report_ag = StringVar()
+        self.stage1_ag_raw = StringVar()
 
         self.stage2_source = StringVar()
         self.stage2_master_data = StringVar(
@@ -559,8 +560,12 @@ class GoldPromoApp:
         self.stage2_attribute = StringVar()
         self.stage2_output = StringVar(value=str(Path.cwd() / "output"))
         self.stage3_source = StringVar()
+        self.stage3_master_data = StringVar(
+            value=default_master_data_path()
+        )
         self.stage3_output = StringVar(value=str(Path.cwd() / "output"))
         self.stage3_report_ag = StringVar()
+        self.stage3_ag_raw = StringVar()
         self.pending_discounts: list[tuple[Path, Discount]] = []
         self.pending_wh_discounts: list[tuple[Path, Discount]] = []
         self.pending_etl: Template_ETL | None = None
@@ -607,23 +612,26 @@ class GoldPromoApp:
         self.non_suggested_sitegroup_input.set("")
         self.non_suggested_sitegroup_list.delete(0, "end")
         self.report_ag.set("")
+        self.stage1_ag_raw.set("")
 
         self.stage2_source.set("")
         self.stage2_master_data.set("")
         self.stage2_attribute.set("")
         self.stage2_output.set("")
         self.stage3_source.set("")
+        self.stage3_master_data.set("")
         self.stage3_output.set("")
         self.stage3_report_ag.set("")
+        self.stage3_ag_raw.set("")
 
         self.check_oa_button.state(["disabled"])
         self.add_sitegroup_button.state(["disabled"])
         self.template_mapping_button.state(["disabled"])
         self.export_src_button.state(["disabled"])
-        self.report_button.state(["disabled"])
-        self.finish_discount_button.state(["disabled"])
-        self.stage3_report_button.state(["disabled"])
-        self.stage3_finish_discount_button.state(["disabled"])
+        self.report_button.state(["!disabled"])
+        self.finish_discount_button.state(["!disabled"])
+        self.stage3_report_button.state(["!disabled"])
+        self.stage3_finish_discount_button.state(["!disabled"])
         self.check_oa_button.pack(side="left", before=self.template_mapping_button)
         self.add_sitegroup_button.pack(
             side="left", padx=(8, 0), before=self.template_mapping_button
@@ -757,14 +765,16 @@ class GoldPromoApp:
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 14))
 
+        self.stage1_ag_raw_button = self._multi_file_row(
+            frame, 9, "AG raw template(s)", self.stage1_ag_raw, excel_files
+        )
         self.report_button = self._multi_file_row(
-            frame, 9, "AG result report(s)", self.report_ag, excel_files, state="disabled"
+            frame, 10, "AG result report(s)", self.report_ag, excel_files
         )
         self.finish_discount_button = ttk.Button(frame, text="Finish Discount Templates", command=self.finish_discount)
-        self.finish_discount_button.grid(row=10, column=1, sticky="w", pady=(6, 0))
-        self.finish_discount_button.state(["disabled"])
+        self.finish_discount_button.grid(row=11, column=1, sticky="w", pady=(6, 0))
         self.export_src_button = ttk.Button(frame, text="Export Processed Src", command=self.export_processed_src)
-        self.export_src_button.grid(row=10, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.export_src_button.grid(row=11, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.export_src_button.state(["disabled"])
 
     def _on_check_attribute_changed(self) -> None:
@@ -775,8 +785,8 @@ class GoldPromoApp:
         self.check_oa_button.state(["disabled"])
         self.add_sitegroup_button.state(["disabled"])
         self.export_src_button.state(["disabled"])
-        self.report_button.state(["disabled"])
-        self.finish_discount_button.state(["disabled"])
+        self.report_button.state(["!disabled"])
+        self.finish_discount_button.state(["!disabled"])
 
         if check_attribute:
             self.check_oa_button.pack_forget()
@@ -1072,24 +1082,27 @@ class GoldPromoApp:
         frame.columnconfigure(1, weight=1)
         excel_files = [("Excel files", "*.xlsx *.xlsm *.xls"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage3_source, excel_files)
-        self._directory_row(frame, 1, self.stage3_output)
-        ttk.Separator(frame).grid(row=2, column=0, columnspan=3, sticky="ew", pady=10)
+        self._file_row(frame, 1, "Master data file", self.stage3_master_data, excel_files)
+        self._directory_row(frame, 2, self.stage3_output)
+        ttk.Separator(frame).grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
         ttk.Button(
             frame, text="Create AG Template", command=self.run_stage3
-        ).grid(row=3, column=0, sticky="w")
+        ).grid(row=4, column=0, sticky="w")
         self.stage3_status = ttk.Label(
             frame,
             text="Select the Gold Promo source and Master data file to create WH Discount templates.",
         )
-        self.stage3_status.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 14))
+        self.stage3_status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 14))
+        self.stage3_ag_raw_button = self._multi_file_row(
+            frame, 6, "AG raw template(s)", self.stage3_ag_raw, excel_files
+        )
         self.stage3_report_button = self._multi_file_row(
-            frame, 5, "AG result report(s)", self.stage3_report_ag, excel_files, state="disabled"
+            frame, 7, "AG result report(s)", self.stage3_report_ag, excel_files
         )
         self.stage3_finish_discount_button = ttk.Button(
             frame, text="Finish Discount Templates", command=self.finish_stage3_discount
         )
-        self.stage3_finish_discount_button.grid(row=6, column=1, sticky="w", pady=(6, 0))
-        self.stage3_finish_discount_button.state(["disabled"])
+        self.stage3_finish_discount_button.grid(row=8, column=1, sticky="w", pady=(6, 0))
 
     @staticmethod
     def _required_paths(*variables: StringVar) -> list[Path] | None:
@@ -1245,8 +1258,8 @@ class GoldPromoApp:
             self.check_oa_button.state(["disabled"])
             self.add_sitegroup_button.state(["disabled"])
             self.export_src_button.state(["disabled"])
-            self.report_button.state(["disabled"])
-            self.finish_discount_button.state(["disabled"])
+            self.report_button.state(["!disabled"])
+            self.finish_discount_button.state(["!disabled"])
             self.stage1_status.config(text="Loading and validating Stage 1…")
             self.root.update_idletasks()
             etl = Template_ETL(
@@ -1654,8 +1667,8 @@ class GoldPromoApp:
             # Never let a later Finish Discount action reuse AG state from an
             # earlier template-creation run.
             self.pending_discounts = []
-            self.report_button.state(["disabled"])
-            self.finish_discount_button.state(["disabled"])
+            self.report_button.state(["!disabled"])
+            self.finish_discount_button.state(["!disabled"])
             self.root.update_idletasks()
             pending_discounts = []
             for group_output, grouped_etl in self._stage1_groups(etl, output):
@@ -1693,6 +1706,11 @@ class GoldPromoApp:
                         self._output_file(group_output, "template_ag", timestamp),
                         finalize_with_excel=True,
                     )
+                    WorkbookExporter.write_template(
+                        discount.template_ag_raw,
+                        self._output_file(group_output, "template_ag_raw", timestamp),
+                        finalize_with_excel=True,
+                    )
                     pending_discounts.append((group_output, discount))
             self._record_used_sitegroups(etl)
             self.pending_discounts = pending_discounts
@@ -1710,7 +1728,7 @@ class GoldPromoApp:
                 text=f"Created {len(created_labels)} template(s): {created_summary}. Output: {output}"
             )
             next_step = (
-                "\n\nUpload the AG result report to finish discount templates."
+                "\n\nAn AG raw template was also saved. After reopening the app, select that raw file and the AG result report to finish discount templates."
                 if create_template_ag
                 else ""
             )
@@ -1754,6 +1772,7 @@ class GoldPromoApp:
     def finish_discount(self) -> None:
         self._finish_discount_templates(
             self.pending_discounts,
+            self.stage1_ag_raw,
             self.report_ag,
             self.stage1_output,
             self.stage1_status,
@@ -1762,6 +1781,7 @@ class GoldPromoApp:
     def finish_stage3_discount(self) -> None:
         self._finish_discount_templates(
             self.pending_wh_discounts,
+            self.stage3_ag_raw,
             self.stage3_report_ag,
             self.stage3_output,
             self.stage3_status,
@@ -1770,11 +1790,40 @@ class GoldPromoApp:
     def _finish_discount_templates(
         self,
         pending_discounts: list[tuple[Path, Discount]],
+        raw_variable: StringVar,
         report_variable: StringVar,
         output_variable: StringVar,
         status_label: ttk.Label,
     ) -> None:
+        raw_paths = [
+            Path(value.strip()).expanduser()
+            for value in raw_variable.get().split(";")
+            if value.strip()
+        ]
+        missing_raw_paths = [str(path) for path in raw_paths if not path.is_file()]
+        if missing_raw_paths:
+            messagebox.showerror(
+                "Missing AG raw template",
+                "Select valid AG raw template files:\n" + "\n".join(missing_raw_paths),
+            )
+            return
+        output = self._output_dir(output_variable)
+        if output is None:
+            return
+        if raw_paths:
+            try:
+                pending_discounts = [
+                    (output, Discount.from_ag_raw_file(path))
+                    for path in raw_paths
+                ]
+            except Exception as error:
+                messagebox.showerror("Invalid AG raw template", str(error))
+                return
         if not pending_discounts:
+            messagebox.showerror(
+                "AG raw template required",
+                "Create an AG template in this session or select exported AG raw template file(s).",
+            )
             return
         paths = [
             Path(value.strip()).expanduser()
@@ -1788,20 +1837,24 @@ class GoldPromoApp:
                 "Select valid AG result report files:\n" + "\n".join(missing_paths),
             )
             return
-        output = self._output_dir(output_variable)
-        if output is None:
-            return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
             for group_output, pending_discount in pending_discounts:
                 discount = pending_discount._update(paths)
                 if discount.report_err is not None and not discount.report_err.empty:
                     report_err = discount.report_err
-                    if "DEPT" in report_err.columns:
+                    if "DEPT" in report_err.columns and "STRUCTURE" in discount.src.columns:
                         department_codes = {
                             f"0{str(structure).strip()}0"
                             for structure in discount.src["STRUCTURE"].dropna().unique()
                         }
+                        report_err = report_err.loc[
+                            report_err["DEPT"].fillna("").astype(str).str.strip().isin(department_codes)
+                        ]
+                    elif "DEPT" in report_err.columns and "DEPARTMENT" in discount.src.columns:
+                        department_codes = set(
+                            discount.src["DEPARTMENT"].fillna("").astype(str).str.strip()
+                        )
                         report_err = report_err.loc[
                             report_err["DEPT"].fillna("").astype(str).str.strip().isin(department_codes)
                         ]
@@ -1814,12 +1867,12 @@ class GoldPromoApp:
                 discount = discount._create_dc()._create_de()
                 WorkbookExporter.write_template(
                     discount.template_dc_free,
-                    self._output_file(group_output, "template_dc_free", timestamp),
+                    self._output_file(group_output, "template_dc_501", timestamp),
                     finalize_with_excel=True,
                 )
                 WorkbookExporter.write_template(
                     discount.template_dc_money,
-                    self._output_file(group_output, "template_dc_money", timestamp),
+                    self._output_file(group_output, "template_dc_201", timestamp),
                     finalize_with_excel=True,
                 )
                 WorkbookExporter.write_template(
@@ -1836,20 +1889,15 @@ class GoldPromoApp:
         """Validate the minimal WH Discount input and create its AG template."""
         sources = self._source_paths(self.stage3_source)
         output = self._output_dir(self.stage3_output)
-        master_data = Path(default_master_data_path())
-        if sources is None or output is None:
+        master_paths = self._required_paths(self.stage3_master_data)
+        if sources is None or output is None or master_paths is None:
             return
-        if not master_data.is_file():
-            messagebox.showerror(
-                "Missing Master data",
-                f"The default Master data file is not available:\n{master_data}",
-            )
-            return
+        master_data = master_paths[0]
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
             self.pending_wh_discounts = []
-            self.stage3_report_button.state(["disabled"])
-            self.stage3_finish_discount_button.state(["disabled"])
+            self.stage3_report_button.state(["!disabled"])
+            self.stage3_finish_discount_button.state(["!disabled"])
             self.stage3_status.config(text="Loading and validating WH Discount…")
             self.root.update_idletasks()
             etl = Template_ETL(sources, master_data, master_data)
@@ -1879,17 +1927,25 @@ class GoldPromoApp:
                     self._output_file(group_output, "template_ag", timestamp),
                     finalize_with_excel=True,
                 )
+                WorkbookExporter.write_template(
+                    discount.template_ag_raw,
+                    self._output_file(group_output, "template_ag_raw", timestamp),
+                    finalize_with_excel=True,
+                )
                 pending_discounts.append((group_output, discount))
 
             self.pending_wh_discounts = pending_discounts
             self.stage3_report_button.state(["!disabled"])
             self.stage3_finish_discount_button.state(["!disabled"])
             self.stage3_status.config(
-                text=f"Created {len(pending_discounts)} AG template(s). Upload AG result report(s) to finish DC/DE."
+                text=(
+                    f"Created {len(pending_discounts)} AG and AG raw template(s). "
+                    "Upload AG result report(s) to finish DC/DE."
+                )
             )
             messagebox.showinfo(
                 "WH Discount complete",
-                "AG templates were created. Upload the AG result report(s) to finish DC and DE templates.",
+                "AG and AG raw templates were created. Upload the AG result report(s) to finish DC and DE templates.",
             )
         except Exception as error:
             self.stage3_status.config(text="WH Discount failed.")

@@ -636,12 +636,20 @@ class DiscountTypeMixin:
         return all(float(n) == 0 for n in numbers)
  
 class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
+    RAW_COLUMNS = [
+        "ACTION", "DEPARTMENT", "SITE", "SUPPLIER", "CONTRACT", "AG NO",
+        "AG CODE", "AG DESCRIPTION", "AG START DATE", "AG END DATE",
+        "GOLD CODE", "LV", "ARTICLE START DATE", "ARTICLE END DATE",
+        "LEVEL OF VALUE", "ERROR", "DISCOUNT VALUE", "RAW START DATE",
+        "RAW END DATE", "DISCOUNT TYPE",
+    ]
+
     def __init__(
-        self, etl: "Template_ETL", username: str = "user", ag_type: str = "GP"
+        self, etl: "Template_ETL | None", username: str = "user", ag_type: str = "GP"
     ):
-        self.src = etl.src
+        self.src = etl.src if etl is not None else None
         self.etl = etl
-        self.nw = etl.dict_network
+        self.nw = etl.dict_network if etl is not None else {}
         self.username = username
         self.ag_type = ag_type
  
@@ -655,6 +663,20 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         self.template_dc_money: Optional[pd.DataFrame] = None
         
         self.template_de: Optional[pd.DataFrame] = None
+
+    @classmethod
+    def from_ag_raw_file(cls, path) -> "Discount":
+        """Restore discount state from a previously exported AG raw template."""
+        data = pd.read_excel(path, dtype=str)
+        missing_columns = [column for column in cls.RAW_COLUMNS if column not in data.columns]
+        if missing_columns:
+            raise ValueError(
+                "AG raw file is missing required columns: " + ", ".join(missing_columns)
+            )
+        discount = cls(None)
+        discount.src = data.copy()
+        discount.template_ag_raw = data.copy()
+        return discount
 
     def _require_ag_raw(self) -> pd.DataFrame:
         if self.template_ag_raw is None:
