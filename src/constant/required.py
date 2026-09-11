@@ -17,6 +17,14 @@ required_stage1: List[str] = [
     '% DELIVERY 1','% DELIVERY 2','% DELIVERY 3','FREE PRODUCT'
 ]
 
+# The standalone warehouse-discount workflow deliberately requires only the
+# fields used to create AG, DC and DE templates.
+required_wh_discount: List[str] = [
+    'GOLD CODE', 'LV', 'SUPPLIER CODE', 'COMMERCIAL CONTRACT', 'PURCHASE NETWORK',
+    'DISCOUNT (% OR VALUE)', 'PP START DAY', 'PP START MONTH', 'PP START YEAR',
+    'PP END DAY', 'PP END MONTH', 'PP END YEAR'
+]
+
 required_stage2: List[str] = [
     'GOLD CODE', 'LV', 'SV', 'TILLCODE', 'SV DESCRIPTION', 'NORMAL SALE PRICE', 'PROMOTION SALE PRICE',
     'PRICELIST', 'SALE VAT'

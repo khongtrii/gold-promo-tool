@@ -636,11 +636,14 @@ class DiscountTypeMixin:
         return all(float(n) == 0 for n in numbers)
  
 class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
-    def __init__(self, etl: "Template_ETL", username: str = "user"):
+    def __init__(
+        self, etl: "Template_ETL", username: str = "user", ag_type: str = "GP"
+    ):
         self.src = etl.src
         self.etl = etl
         self.nw = etl.dict_network
         self.username = username
+        self.ag_type = ag_type
  
         self.template_ag_raw: Optional[pd.DataFrame] = None
 
@@ -668,9 +671,9 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             self.template_ag_raw = pd.DataFrame(columns=[*column_ag, "DISCOUNT VALUE", "RAW START DATE", "RAW END DATE", "DISCOUNT TYPE", "CONTRACT"])
             return self
 
-        start_date = data["PP START DATE"] #.min()
-        end_date = data["PP END DATE"] #.max()
-        if pd.isna(start_date) or pd.isna(end_date):
+        start_date = data["PP START DATE"]
+        end_date = data["PP END DATE"]
+        if start_date.isna().any() or end_date.isna().any():
             raise ValueError("Discount processing requires valid PP START DATE and PP END DATE values.")
 
         today = pd.Timestamp.today().strftime("%d.%m")
@@ -683,16 +686,16 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             column_ag[4]: data["COMMERCIAL CONTRACT"],
             column_ag[6]: "",
             column_ag[7]: (
-                f"{etl.cata}D.GP"
+                f"{etl.cata}D.{self.ag_type}"
                 + data["STRUCTURE"].astype(str)
                 + f"-{self.username}({today})"
             ),
-            column_ag[8]: start_date.strftime("%d/%m/%Y"),
-            column_ag[9]: end_date.strftime("%d/%m/%Y"),
+            column_ag[8]: start_date.dt.strftime("%d/%m/%Y"),
+            column_ag[9]: end_date.dt.strftime("%d/%m/%Y"),
             column_ag[10]: data["GOLD CODE"],
             column_ag[11]: data["LV"],
-            column_ag[12]: start_date.strftime("%d/%m/%Y"),
-            column_ag[13]: end_date.strftime("%d/%m/%Y"),
+            column_ag[12]: start_date.dt.strftime("%d/%m/%Y"),
+            column_ag[13]: end_date.dt.strftime("%d/%m/%Y"),
             column_ag[14]: "0",
             column_ag[15]: "",
             "DISCOUNT VALUE": data["DISCOUNT (% OR VALUE)"],
@@ -743,12 +746,13 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             .str.split(";")
             .astype(object)
         )
-        site_lists.loc[mask_ok] = site_lists.loc[mask_ok].map(
-            lambda sites: sites + store_minigo + wh
-        )
-        site_lists.loc[~mask_ok] = site_lists.loc[~mask_ok].map(
-            lambda sites: sites + store_minigo
-        )
+        if self.ag_type != "WH":
+            site_lists.loc[mask_ok] = site_lists.loc[mask_ok].map(
+                lambda sites: sites + store_minigo + wh
+            )
+            site_lists.loc[~mask_ok] = site_lists.loc[~mask_ok].map(
+                lambda sites: sites + store_minigo
+            )
         template_ag_raw[column_ag[2]] = site_lists
 
         template_ag_raw = template_ag_raw.explode(column_ag[2])

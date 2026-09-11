@@ -17,6 +17,7 @@ from src.constant.required import (
     required_src,
     required_stage1,
     required_stage2,
+    required_wh_discount,
 )
 
 
@@ -561,6 +562,60 @@ class Template_ETL:
         self.src = pd.concat(sources, ignore_index=True)
         self.should_generate_so_sitegroup = True
 
+        return self
+
+    def _load_src_wh_discount(self) -> "Template_ETL":
+        """Load only the fields needed by the standalone WH Discount flow."""
+        self._load_source_metadata()
+        sources = []
+        for path in self.path_src:
+            data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
+            data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
+            data["NOTE ERR FROM MASTER DATA"] = ""
+            self._check_required_columns(data, required_wh_discount)
+            self._check_required_data(data, required_wh_discount)
+
+            discount_text = (
+                data["DISCOUNT (% OR VALUE)"]
+                .fillna("")
+                .astype(str)
+                .str.replace(r"\s+", "", regex=True)
+            )
+            plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
+            numeric_discount = pd.to_numeric(
+                discount_text.where(plain_discount).map(self._normalize_decimal_number),
+                errors="coerce",
+            )
+            invalid_discount = ~discount_text.str.fullmatch(self.VALID_DISCOUNT, na=False)
+            self._append_note_err(
+                data, data.index[invalid_discount], self.DISCOUNT_VALUE_ERROR
+            )
+            percentage_over_limit = discount_text.map(self._percentage_discount_exceeds_limit)
+            self._append_note_err(
+                data,
+                data.index[percentage_over_limit],
+                self.DISCOUNT_PERCENTAGE_LIMIT_ERROR,
+            )
+            valid_plain_discount = plain_discount & ~invalid_discount
+            data["DISCOUNT (% OR VALUE)"] = data["DISCOUNT (% OR VALUE)"].astype(object)
+            data.loc[~plain_discount, "DISCOUNT (% OR VALUE)"] = discount_text.loc[
+                ~plain_discount
+            ]
+            data.loc[valid_plain_discount, "DISCOUNT (% OR VALUE)"] = (
+                numeric_discount.loc[valid_plain_discount].astype(float)
+            )
+
+            # WH Discount consumes the Purchase Network exactly as supplied;
+            # unlike Stage 1 it must not expand network groups from master data.
+            data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"]
+            data["STRUCTURE"] = self.dept[path.name]
+            data["FILE NAME"] = path.name
+            data["_SOURCE_ROW"] = data.index + 8
+            data = self._convert_date(data)
+            sources.append(data)
+
+        self.src = pd.concat(sources, ignore_index=True)
+        self.should_generate_so_sitegroup = False
         return self
 
     def clear_so_and_sitegroup(self) -> "Template_ETL":
