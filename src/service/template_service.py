@@ -484,6 +484,7 @@ class Template_ETL:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
             self._check_required_data(data, required_stage1)
+            self._restore_percentage_discounts(data, path)
             converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
             attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
             for pattern, category in self.CATEGORY_RULES:
@@ -564,6 +565,32 @@ class Template_ETL:
 
         return self
 
+    @staticmethod
+    def _restore_percentage_discounts(data: pd.DataFrame, path: Path) -> None:
+        """Keep Excel percentage cells as user-facing percentage discounts.
+
+        Pandas reads an Excel cell such as ``10%`` as the numeric value
+        ``0.1``.  Discount templates require the original percentage form, so
+        recover it from the cell number format before validation.
+        """
+        column = "DISCOUNT (% OR VALUE)"
+        if column not in data.columns:
+            return
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            worksheet = workbook["Template"]
+            headers = [cell.value for cell in next(worksheet.iter_rows(min_row=7, max_row=7))]
+            if column not in headers:
+                return
+            column_index = headers.index(column) + 1
+            for dataframe_index, excel_row in zip(data.index, range(8, len(data) + 8)):
+                cell = worksheet.cell(excel_row, column_index)
+                if "%" not in str(cell.number_format) or not isinstance(cell.value, (int, float)):
+                    continue
+                data.at[dataframe_index, column] = f"{cell.value * 100:g}%"
+        finally:
+            workbook.close()
+
     def _load_src_wh_discount(self) -> "Template_ETL":
         """Load only the fields needed by the standalone WH Discount flow."""
         self._load_source_metadata()
@@ -574,6 +601,7 @@ class Template_ETL:
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_wh_discount)
             self._check_required_data(data, required_wh_discount)
+            self._restore_percentage_discounts(data, path)
 
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"]

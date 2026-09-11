@@ -929,7 +929,7 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             column_dc[4]:ag_raw.loc[~mask_free, "AG CODE"],
             column_dc[5]:ag_raw.loc[~mask_free, "AG DESCRIPTION"],
             column_dc[6]:ag_raw.loc[~mask_free, "AG CODE"],
-            column_dc[7]:"501",
+            column_dc[7]:"201",
             column_dc[8]:"1",
             column_dc[9]:"2",
             column_dc[10]:"0",
