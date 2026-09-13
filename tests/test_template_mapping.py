@@ -4,7 +4,11 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from src.constant.template import column_po_commitment, column_promotion_plan
+from src.constant.template import (
+    column_po_commitment,
+    column_promotion_plan,
+    column_purchase,
+)
 from src.service.template_mapping import AttributeMapMixin, Discount, Template_Mapping
 
 
@@ -137,6 +141,37 @@ class POCommitmentMappingTest(unittest.TestCase):
         )
         self.assertEqual(mapping.template_po_commitment["QUANTITY"].tolist(), [12, 24])
         self.assertEqual(mapping.template_po_commitment_report["SUPPLIER"].tolist(), ["SUP", "SUP"])
+
+
+class PurchaseMappingTest(unittest.TestCase):
+    def test_formats_whole_prices_and_removes_float_noise(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "GOLD CODE": ["02043862", "02043863", "02043864"],
+                    "LV": ["1", "1", "1"],
+                    "NORMAL PURCHASE PRICE": [45100.0, 45100.0000000001, 45100.25],
+                    "PURCHASE NETWORK EXPANDED": ["S1", "S1", "S1"],
+                    "PP START DATE": [pd.Timestamp("2026-10-01")] * 3,
+                    "PP END DATE": [pd.Timestamp("2026-10-10")] * 3,
+                    "COMMERCIAL CONTRACT": ["CONT"] * 3,
+                    "PURCHASE VAT": ["10%"] * 3,
+                    "SUPPLIER CODE": ["SUP"] * 3,
+                }
+            ),
+            dict_network={"wh8": []},
+            plan=pd.DataFrame(),
+            cata="C01",
+            cata_description="Catalogue description",
+            cata_period="Period",
+        )
+
+        mapping = Template_Mapping(etl)._create_purchase()
+
+        self.assertEqual(
+            mapping.template_purchase[column_purchase[3]].tolist(),
+            ["45100", "45100", "45100.25"],
+        )
 
 
 class DiscountRawRestoreTest(unittest.TestCase):

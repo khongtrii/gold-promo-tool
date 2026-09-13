@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import List, Optional
 
 import pandas as pd
@@ -411,6 +412,27 @@ class SOCalendarMixin(CalendarMixin):
 
 
 class PurchaseMixin:
+    @staticmethod
+    def _format_purchase_price(value) -> str:
+        """Format purchase price without harmless floating-point artifacts."""
+        if pd.isna(value):
+            return ""
+        try:
+            price = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return str(value)
+        if not price.is_finite():
+            return str(value)
+
+        # Values are normally whole numbers or have a short decimal part.
+        # Round only when the excess is tiny floating-point noise, preserving
+        # genuine prices with more than six decimal places.
+        rounded = price.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+        if abs(price - rounded) <= Decimal("0.000000001"):
+            price = rounded
+
+        return format(price.normalize(), "f") if price else "0"
+
     def _create_purchase(self) -> "PurchaseMixin":
         data = self.src
 
@@ -418,7 +440,9 @@ class PurchaseMixin:
             column_purchase[0]: data["GOLD CODE"],
             column_purchase[1]: data["LV"],
             column_purchase[2]: "1",
-            column_purchase[3]: data["NORMAL PURCHASE PRICE"],
+            column_purchase[3]: data["NORMAL PURCHASE PRICE"].map(
+                self._format_purchase_price
+            ),
             column_purchase[4]: data["PURCHASE NETWORK EXPANDED"],
             column_purchase[5]: data["PP START DATE"].dt.strftime("%d/%m/%Y"),
             column_purchase[6]: data["PP END DATE"].dt.strftime("%d/%m/%Y"),
