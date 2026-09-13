@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 import pandas as pd
 from openpyxl import Workbook
 
+from src.constant.required import required_stage1
 from src.service.template_service import Template_ETL
 
 
@@ -175,6 +176,46 @@ class DiscountParsingTest(unittest.TestCase):
         allocation["PURCHASE NETWORK EXPANDED"] = ""
         result = Template_ETL([])._check_allocation(allocation)
         self.assertNotIn("Tổng % DELIVERY", result.at[0, "NOTE ERR FROM MASTER DATA"])
+
+    def test_stage2_validates_vat_and_normalizes_integral_sale_price(self):
+        data = pd.DataFrame(
+            {
+                "SALE VAT": ["10%", " kkkt ", "invalid", "0.1"],
+                "PROMOTION SALE PRICE": [
+                    "45100.0",
+                    "45100.0000000001",
+                    "45100.5",
+                    "not a number",
+                ],
+            }
+        )
+
+        result = Template_ETL([])._validate_stage2_sale_values(data)
+
+        self.assertEqual(result["SALE VAT"].tolist()[:2], ["10%", "KKKT"])
+        self.assertEqual(result["PROMOTION SALE PRICE"].tolist()[:2], ["45100", "45100"])
+        self.assertIn("SALE VAT chỉ được phép", result.at[2, "NOTE ERR FROM MASTER DATA"])
+        self.assertIn("SALE VAT chỉ được phép", result.at[3, "NOTE ERR FROM MASTER DATA"])
+        self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[2, "NOTE ERR FROM MASTER DATA"])
+        self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[3, "NOTE ERR FROM MASTER DATA"])
+
+    def test_free_product_is_required_only_with_check_attribute(self):
+        required_without_free_product = [
+            column
+            for column in required_stage1
+            if column != "FREE PRODUCT"
+        ]
+        data = pd.DataFrame(
+            {column: ["value"] for column in required_without_free_product}
+            | {"FREE PRODUCT": [""]}
+        )
+        data["NOTE ERR FROM MASTER DATA"] = ""
+
+        Template_ETL._check_required_data(data, required_without_free_product)
+        self.assertEqual(data.at[0, "NOTE ERR FROM MASTER DATA"], "")
+
+        Template_ETL._check_required_data(data, required_stage1)
+        self.assertIn("FREE PRODUCT", data.at[0, "NOTE ERR FROM MASTER DATA"])
 
 
 if __name__ == "__main__":

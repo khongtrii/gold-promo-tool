@@ -18,6 +18,7 @@ from src.constant.required import (
     required_stage1,
     required_stage2,
     required_wh_discount,
+    VAT,
 )
 
 
@@ -382,6 +383,38 @@ class Template_ETL:
 
         return data
 
+    def _validate_stage2_sale_values(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Validate VAT and normalize valid Sale Price values to integers."""
+        self._ensure_note_err(data)
+
+        data["SALE VAT"] = data["SALE VAT"].fillna("").astype(str).str.strip().str.upper()
+        invalid_vat = ~data["SALE VAT"].isin(VAT)
+        self._append_note_err(
+            data,
+            data.index[invalid_vat],
+            "SALE VAT chỉ được phép là 0%, 5%, 8%, 10%, KKKT hoặc KCT.",
+        )
+
+        price_text = data["PROMOTION SALE PRICE"].fillna("").astype(str).str.strip()
+        normalized_price = price_text.map(self._normalize_decimal_number)
+        numeric_price = pd.to_numeric(normalized_price, errors="coerce")
+        populated_price = price_text.ne("")
+        invalid_price = populated_price & (
+            numeric_price.isna()
+            | (numeric_price - numeric_price.round()).abs().gt(1e-9)
+        )
+        self._append_note_err(
+            data,
+            data.index[invalid_price],
+            "PROMOTION SALE PRICE phải là số nguyên.",
+        )
+
+        valid_price = populated_price & ~invalid_price
+        data.loc[valid_price, "PROMOTION SALE PRICE"] = (
+            numeric_price.loc[valid_price].round().astype("int64").astype(str)
+        )
+        return data
+
     def _load_attribute(self, sheet_name: str | None = None) -> "Template_ETL":
         raw_data = pd.read_excel(
             self.path_attribute,
@@ -483,7 +516,12 @@ class Template_ETL:
                 if col not in data.columns:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
-            self._check_required_data(data, required_stage1)
+            required_source_data = required_stage1
+            if not self.check_attribute:
+                required_source_data = [
+                    column for column in required_stage1 if column != "FREE PRODUCT"
+                ]
+            self._check_required_data(data, required_source_data)
             self._restore_percentage_cells(data, path)
             converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
             attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
@@ -687,6 +725,7 @@ class Template_ETL:
             self._check_required_columns(sale_period, period_columns)
             self._check_required_data(data, required)
             self._check_required_data(sale_period, period_columns)
+            self._validate_stage2_sale_values(data)
 
             data[period_columns] = sale_period.loc[sale_period.index[0], period_columns].values
     
