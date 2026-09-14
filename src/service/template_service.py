@@ -135,6 +135,7 @@ class Template_ETL:
         self.cata_description: str = str()
         self.cata_period: str = str()
         self.should_generate_so_sitegroup = True
+        self.should_generate_so = True
 
     @staticmethod
     def _department_code(value) -> str:
@@ -301,6 +302,14 @@ class Template_ETL:
 
     def _unique_sorted_sites(self, value) -> tuple:
         return tuple(sorted(set(self._parse_sites(value)), key=self._sort_key))
+
+    @staticmethod
+    def _default_blank_discounts(data: pd.DataFrame) -> pd.DataFrame:
+        """Treat missing source discounts as an explicit zero percent."""
+        column = "DISCOUNT (% OR VALUE)"
+        blank = data[column].fillna("").astype(str).str.strip().eq("")
+        data.loc[blank, column] = "0%"
+        return data
 
     def _load_network(self) -> "Template_ETL":
         data = pd.read_excel(
@@ -506,7 +515,7 @@ class Template_ETL:
 
         return self
         
-    def _load_src(self) -> "Template_ETL":
+    def _load_src(self, validate_source: bool = True) -> "Template_ETL":
         self._load_source_metadata()
         sources = []
         for path in self.path_src:
@@ -516,13 +525,24 @@ class Template_ETL:
                 if col not in data.columns:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
+            data = self._default_blank_discounts(data)
             required_source_data = required_stage1
             if not self.check_attribute:
                 required_source_data = [
                     column for column in required_stage1 if column != "FREE PRODUCT"
                 ]
-            self._check_required_data(data, required_source_data)
-            self._restore_percentage_cells(data, path)
+            if validate_source:
+                self._check_required_data(data, required_source_data)
+            # Temporarily disabled to avoid reopening and scanning every source
+            # workbook with openpyxl. Keep the helper available for later use.
+            # self._restore_percentage_cells(data, path)
+            if not validate_source:
+                data.columns = [str(col).replace("-RECOMMENDATION QUALITY", "") for col in data.columns]
+                data["FILE NAME"] = path.name
+                data["_SOURCE_ROW"] = data.index + 8
+                sources.append(data)
+                continue
+
             converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
             attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
             for pattern, category in self.CATEGORY_RULES:
@@ -600,6 +620,7 @@ class Template_ETL:
 
         self.src = pd.concat(sources, ignore_index=True)
         self.should_generate_so_sitegroup = True
+        self.should_generate_so = True
 
         return self
 
@@ -645,8 +666,11 @@ class Template_ETL:
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_wh_discount)
+            data = self._default_blank_discounts(data)
             self._check_required_data(data, required_wh_discount)
-            self._restore_percentage_cells(data, path)
+            # Temporarily disabled to avoid reopening and scanning every source
+            # workbook with openpyxl. Keep the helper available for later use.
+            # self._restore_percentage_cells(data, path)
 
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"]
@@ -689,12 +713,59 @@ class Template_ETL:
 
         self.src = pd.concat(sources, ignore_index=True)
         self.should_generate_so_sitegroup = False
+        self.should_generate_so = False
         return self
 
     def clear_so_and_sitegroup(self) -> "Template_ETL":
         """Clear prior SITE GROUP and SO values for a fresh Stage 1 run."""
         if self.src is not None:
             self.src[["SITE GROUP", "SO"]] = ""
+        self.should_generate_so_sitegroup = True
+        self.should_generate_so = True
+        return self
+
+    def clear_sitegroup_keep_so(self) -> "Template_ETL":
+        """Keep complete source SO values while forcing Site Group resolution."""
+        if self.src is not None:
+            self.src["SITE GROUP"] = ""
+        self.should_generate_so = False
+        self.should_generate_so_sitegroup = True
+        return self
+
+    def has_complete_so(self) -> bool:
+        """Return whether every loaded source row contains a non-blank SO."""
+        if self.src is None or self.src.empty or "SO" not in self.src.columns:
+            return False
+        return bool(self.src["SO"].fillna("").astype(str).str.strip().ne("").all())
+
+    def prepare_check_oa_without_validation(self) -> "Template_ETL":
+        """Build only the derived fields required by Check OA and Site Group."""
+        if self.src is None:
+            raise ValueError("Stage 1 source data has not been loaded.")
+        data = self.src
+        for column in ("PURCHASE NETWORK", "GOLD PROMO NETWORK"):
+            data[column] = data[column].map(self._normalize_network_punctuation)
+        data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"].map(self._extract_network)
+        data["GOLD PROMO NETWORK EXPANDED"] = data["GOLD PROMO NETWORK"].map(self._extract_network)
+        for column in ("PURCHASE NETWORK EXPANDED", "GOLD PROMO NETWORK EXPANDED"):
+            data[column] = data[column].map(self._sort_network)
+        data["STRUCTURE"] = data["FILE NAME"].map(self.dept)
+        data["PP START DATE"] = pd.to_datetime(
+            data["PP START DAY"].astype(str) + "/" + data["PP START MONTH"].astype(str)
+            + "/" + data["PP START YEAR"].astype(str),
+            format="%d/%m/%Y", errors="coerce",
+        )
+        data["PP END DATE"] = pd.to_datetime(
+            data["PP END DAY"].astype(str) + "/" + data["PP END MONTH"].astype(str)
+            + "/" + data["PP END YEAR"].astype(str),
+            format="%d/%m/%Y", errors="coerce",
+        )
+        data["COMMERCIAL CONTRACT"] = (
+            data["COMMERCIAL CONTRACT"].fillna("").astype(str).map(self._contract_checking)
+        )
+        data["SITE GROUP"] = ""
+        self.src = data
+        self.should_generate_so = False
         self.should_generate_so_sitegroup = True
         return self
 
@@ -1322,7 +1393,7 @@ class Template_ETL:
         return data
 
     def get_sitegroup_suggestions(self) -> list[dict]:
-        """Suggest a nearby existing Site Group or an unused five-digit code."""
+        """Generate a new five-digit code for every non-exact Site Group."""
         if self.src is None:
             return []
 
@@ -1343,59 +1414,15 @@ class Template_ETL:
             if str(rows["SITE GROUP"].iat[0]).strip():
                 continue
 
-            current_sites = set(self._parse_sites(network))
-            candidates = []
-            for code, members in self.sitegroup_members.items():
-                if code in self.non_suggested_sitegroup_codes:
-                    continue
-                candidate_sites = set(members)
-                missing = sorted(current_sites - candidate_sites, key=self._sort_key)
-                extra = sorted(candidate_sites - current_sites, key=self._sort_key)
-                candidates.append((len(missing) + len(extra), len(missing), len(extra), code, missing, extra))
-
-            unavailable_codes = assigned_codes | suggested_codes
-            available_candidates = [
-                item for item in candidates
-                if item[3] not in unavailable_codes
-            ]
-            eligible = [
-                item for item in available_candidates
-                if item[1] <= 5 and item[2] <= 5
-            ]
-            if eligible:
-                _, missing_count, extra_count, code, missing, extra = min(
-                    eligible,
-                    key=lambda item: (item[0], item[1], item[2], self._sort_key(item[3])),
-                )
-                suggested_codes.add(code)
-                original_code = code
-            else:
-                # Keep the closest difference visible for review and propose
-                # a new five-digit code not used by either Site Group sheet.
-                if available_candidates or candidates:
-                    nearest = min(
-                        available_candidates or candidates,
-                        key=lambda item: (
-                            item[0], item[1], item[2], self._sort_key(item[3])
-                        ),
-                    )
-                    _, missing_count, extra_count, _, missing, extra = nearest
-                else:
-                    missing = sorted(current_sites, key=self._sort_key)
-                    extra = []
-                    missing_count = len(missing)
-                    extra_count = 0
-                unavailable_new_codes = (
-                    self.master_sitegroup_codes
-                    | self.activated_sitegroup_codes
-                    | assigned_codes
-                    | suggested_codes
-                    | self.non_suggested_sitegroup_codes
-                )
-                code = self._generate_sitegroup_code(unavailable_new_codes)
-                suggested_codes.add(code)
-                # A blank original marks this as a new code when accepted.
-                original_code = ""
+            unavailable_new_codes = (
+                self.master_sitegroup_codes
+                | self.activated_sitegroup_codes
+                | assigned_codes
+                | suggested_codes
+                | self.non_suggested_sitegroup_codes
+            )
+            code = self._generate_sitegroup_code(unavailable_new_codes)
+            suggested_codes.add(code)
             raw_networks = sorted(
                 {str(value) for value in rows["GOLD PROMO NETWORK"].dropna() if str(value).strip()}
             )
@@ -1413,11 +1440,7 @@ class Template_ETL:
                     "gold_promo_network": "; ".join(raw_networks),
                     "expanded_network": network,
                     "suggested_code": code,
-                    "original_suggested_code": original_code,
-                    "missing_count": missing_count,
-                    "extra_count": extra_count,
-                    "missing_stores": ";".join(missing),
-                    "extra_stores": ";".join(extra),
+                    "original_suggested_code": "",
                 }
             )
 
@@ -2023,7 +2046,7 @@ class Template_ETL:
         source_structure = data["FILE NAME"].map(self.dept)
         blank_structure = data["STRUCTURE"].fillna("").astype(str).str.strip().eq("")
         data.loc[blank_structure, "STRUCTURE"] = source_structure.loc[blank_structure]
-        if self.should_generate_so_sitegroup:
+        if self.should_generate_so:
             # Validate always regenerates SO. SITE GROUP is populated later by
             # the separate Add Site Group action in the desktop workflow.
             data["STRUCTURE"] = source_structure

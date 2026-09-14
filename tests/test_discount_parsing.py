@@ -10,6 +10,16 @@ from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    def test_blank_discount_defaults_to_zero_percent(self):
+        data = pd.DataFrame({"DISCOUNT (% OR VALUE)": [None, "", "  ", "10%"]})
+
+        result = Template_ETL._default_blank_discounts(data)
+
+        self.assertEqual(
+            result["DISCOUNT (% OR VALUE)"].tolist(),
+            ["0%", "0%", "0%", "10%"],
+        )
+
     def test_accepts_supported_discount_formats(self):
         valid_values = [
             "10",

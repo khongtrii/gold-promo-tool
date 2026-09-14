@@ -344,53 +344,33 @@ class SiteGroupReview:
             self.window,
             text=(
                 "Suggestions are calculated only from GOLD PROMO NETWORK EXPANDED and master SITE lists. "
-                "The closest existing code is suggested when both Missing and Extra counts are at most 5; "
-                "otherwise a new available five-digit code is generated. "
+                "Exact matches use the existing Site Group; every mismatch receives a new available "
+                "five-digit code. "
                 "Double-click a Suggested code to change it."
             ),
         ).pack(anchor="w", padx=12, pady=(12, 6))
         tree_frame = ttk.Frame(self.window)
         tree_frame.pack(fill="both", expand=True, padx=12, pady=6)
-        columns = (
-            "suggested", "members", "structure", "network", "expanded",
-            "missing", "missing_detail", "extra", "extra_detail",
-        )
+        columns = ("suggested", "network", "expanded")
         self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
         headings = {
             "suggested": "Suggested SITE GROUP CODE",
-            "members": "SITE GROUP stores",
-            "structure": "STRUCTURE",
             "network": "GOLD PROMO NETWORK",
             "expanded": "GOLD PROMO NETWORK EXPANDED",
-            "missing": "Count of store to add",
-            "missing_detail": "Store to Add",
-            "extra": "Count of store to remove",
-            "extra_detail": "Store to Remove",
         }
         widths = {
-            "suggested": 140, "members": 300, "structure": 90,
-            "network": 140, "expanded": 320, "missing": 60,
-            "missing_detail": 260, "extra": 60, "extra_detail": 260,
+            "suggested": 180, "network": 320, "expanded": 520,
         }
         for column in columns:
             self.tree.heading(column, text=headings[column])
             self.tree.column(column, width=widths[column], anchor="w")
         for suggestion in suggestions:
-            members = ";".join(self.etl.sitegroup_members.get(suggestion["suggested_code"], ()))
-            if not members and not suggestion["original_suggested_code"]:
-                members = suggestion["expanded_network"]
             self.tree.insert(
                 "", "end",
                 values=(
                     suggestion["suggested_code"],
-                    members,
-                    suggestion["structure"],
                     suggestion["gold_promo_network"],
                     suggestion["expanded_network"],
-                    suggestion["missing_count"],
-                    suggestion["missing_stores"],
-                    suggestion["extra_count"],
-                    suggestion["extra_stores"],
                 ),
             )
         self.tree.pack(side="left", fill="both", expand=True)
@@ -437,9 +417,6 @@ class SiteGroupReview:
         entry.destroy()
         values = list(self.tree.item(self._edit_item, "values"))
         values[0] = value
-        values[1] = ";".join(self.etl.sitegroup_members.get(value, ()))
-        if value and not values[1]:
-            values[1] = values[4]
         self.tree.item(self._edit_item, values=values)
 
     def _cancel_edit(self, event=None) -> None:
@@ -453,7 +430,7 @@ class SiteGroupReview:
             self._finish_edit()
         for item in self.tree.get_children():
             values = self.tree.item(item, "values")
-            network = values[4]
+            network = values[2]
             code = str(values[0]).strip()
             for suggestion in self.suggestions:
                 if suggestion["expanded_network"] == network:
@@ -477,14 +454,8 @@ class SiteGroupReview:
 
         columns = [
             "Suggested SITE GROUP CODE",
-            "SITE GROUP stores",
-            "STRUCTURE",
             "GOLD PROMO NETWORK",
             "GOLD PROMO NETWORK EXPANDED",
-            "Missing Count",
-            "Missing Stores",
-            "Extra Count",
-            "Extra Stores",
         ]
         rows = [self.tree.item(item, "values") for item in self.tree.get_children()]
         try:
@@ -725,7 +696,7 @@ class GoldPromoApp:
             command=self.show_exception_discount_gold_codes,
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 2))
 
-        excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes not used for suggestions", padding=8)
+        excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes unavailable for new codes", padding=8)
         excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
         excluded_frame.columnconfigure(0, weight=1)
         ttk.Entry(excluded_frame, textvariable=self.non_suggested_sitegroup_input, width=30).grid(
@@ -761,6 +732,7 @@ class GoldPromoApp:
         self.template_mapping_button.pack(side="left", padx=(8, 0))
         self.template_mapping_button.state(["disabled"])
         self.stage1_source.trace_add("write", self._update_template_mapping_button)
+        self.stage1_master_data.trace_add("write", self._update_template_mapping_button)
         self._update_template_mapping_button()
         self.stage1_status = ttk.Label(frame, text="Select the Gold Promo source and Master data file, then run.")
         self.stage1_status.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 14))
@@ -813,8 +785,12 @@ class GoldPromoApp:
             for value in self.stage1_source.get().split(";")
             if value.strip()
         ]
-        inputs_ready = bool(source_paths) and all(path.is_file() for path in source_paths)
-        self.template_mapping_button.state(["!disabled"] if inputs_ready else ["disabled"])
+        master_path = Path(self.stage1_master_data.get().strip()).expanduser()
+        source_ready = bool(source_paths) and all(path.is_file() for path in source_paths)
+        inputs_ready = source_ready and master_path.is_file()
+        self.template_mapping_button.state(["!disabled"] if source_ready else ["disabled"])
+        if not self.stage1_check_attribute.get() and self.pending_etl is None:
+            self.check_oa_button.state(["!disabled"] if inputs_ready else ["disabled"])
 
     def add_non_suggested_sitegroup(self) -> None:
         codes = [
@@ -1252,14 +1228,6 @@ class GoldPromoApp:
         master_data = paths[0]
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
-            # Do not allow actions to use artifacts from an earlier pipeline run.
-            self.pending_etl = None
-            self.pending_discounts = []
-            self.check_oa_button.state(["disabled"])
-            self.add_sitegroup_button.state(["disabled"])
-            self.export_src_button.state(["disabled"])
-            self.report_button.state(["!disabled"])
-            self.finish_discount_button.state(["!disabled"])
             self.stage1_status.config(text="Loading and validating Stage 1…")
             self.root.update_idletasks()
             etl = Template_ETL(
@@ -1285,9 +1253,34 @@ class GoldPromoApp:
                     )
                     return
                 etl.should_generate_so_sitegroup = False
+                etl.should_generate_so = False
             else:
-                # The normal workflow recreates SO and resolves SITE GROUP later.
-                etl.clear_so_and_sitegroup()
+                keep_so = False
+                if etl.has_complete_so():
+                    keep_so = messagebox.askyesnocancel(
+                        "Keep existing SO?",
+                        "The source contains complete SO values.\n\n"
+                        "Yes: validate and keep the existing SO.\n"
+                        "No: validate and generate SO again.\n"
+                        "Cancel: stop without running the pipeline.",
+                        parent=self.root,
+                    )
+                    if keep_so is None:
+                        self.stage1_status.config(text="Stage 1 cancelled.")
+                        return
+                if keep_so:
+                    etl.clear_sitegroup_keep_so()
+                else:
+                    etl.clear_so_and_sitegroup()
+
+            # Do not allow later actions to use artifacts from an earlier run.
+            self.pending_etl = None
+            self.pending_discounts = []
+            self.check_oa_button.state(["disabled"])
+            self.add_sitegroup_button.state(["disabled"])
+            self.export_src_button.state(["disabled"])
+            self.report_button.state(["!disabled"])
+            self.finish_discount_button.state(["!disabled"])
             etl._pipeline()._load_plan()
             if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                 self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
@@ -1321,12 +1314,11 @@ class GoldPromoApp:
             self.pending_etl = etl
             self.check_oa_button.state(["!disabled"])
             self.export_src_button.state(["!disabled"])
-            self.stage1_status.config(
-                text=f"Validation and Get SO complete. Created {len(report_paths)} network report(s)."
-            )
+            action = "Validation and Get SO" if etl.should_generate_so else "Validation with existing SO"
+            self.stage1_status.config(text=f"{action} complete. Created {len(report_paths)} network report(s).")
             messagebox.showinfo(
                 "Pipeline complete",
-                "Validation and Get SO are complete.\n"
+                f"{action} is complete.\n"
                 f"Created {len(report_paths)} network report(s) in the source output folder(s).\n\n"
                 "You can export STRUCTURE + SO now, or create Check OA next.",
             )
@@ -1337,14 +1329,32 @@ class GoldPromoApp:
     def create_check_oa(self) -> None:
         """Create the Check OA file from the processed Stage 1 source."""
         etl = self.pending_etl
-        if etl is None or etl.src is None:
-            messagebox.showerror("Pipeline required", "Run the Stage 1 pipeline first.")
-            return
         output = self._output_dir(self.stage1_output)
         if output is None:
             return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
+            if etl is None or etl.src is None:
+                sources = self._source_paths(self.stage1_source)
+                master_paths = self._required_paths(self.stage1_master_data)
+                if sources is None or master_paths is None:
+                    return
+                master_data = master_paths[0]
+                direct_etl = Template_ETL(sources, master_data, master_data)
+                direct_etl._load_network()._load_src(validate_source=False)
+                if not direct_etl.has_complete_so():
+                    messagebox.showerror(
+                        "Complete SO required",
+                        "Every source row must contain SO to create Check OA directly.\n\n"
+                        "Run Validate Pipeline / Get SO first.",
+                        parent=self.root,
+                    )
+                    self.stage1_status.config(text="Stopped: source SO values are incomplete.")
+                    return
+                self._load_discount_exceptions(direct_etl)
+                direct_etl.prepare_check_oa_without_validation()._load_plan()
+                self.pending_etl = direct_etl
+                etl = direct_etl
             self.stage1_status.config(text="Creating Check OA file from the processed src…")
             self.root.update_idletasks()
             output_paths = []
@@ -1650,6 +1660,7 @@ class GoldPromoApp:
                     self._show_incomplete_template_source(missing_columns)
                     return
                 etl.should_generate_so_sitegroup = False
+                etl.should_generate_so = False
                 etl._pipeline()._load_plan()
                 if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                     return
@@ -1870,13 +1881,8 @@ class GoldPromoApp:
 
                 discount = discount._create_dc()._create_de()
                 WorkbookExporter.write_template(
-                    discount.template_dc_free,
-                    self._output_file(group_output, "template_dc_501", timestamp),
-                    finalize_with_excel=True,
-                )
-                WorkbookExporter.write_template(
-                    discount.template_dc_money,
-                    self._output_file(group_output, "template_dc_201", timestamp),
+                    discount.template_dc,
+                    self._output_file(group_output, "template_dc", timestamp),
                     finalize_with_excel=True,
                 )
                 WorkbookExporter.write_template(

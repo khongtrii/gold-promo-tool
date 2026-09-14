@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from src.constant.template import (
+    column_dc,
     column_po_commitment,
     column_promotion_plan,
     column_purchase,
@@ -175,6 +176,54 @@ class PurchaseMappingTest(unittest.TestCase):
 
 
 class DiscountRawRestoreTest(unittest.TestCase):
+    def test_de_removes_insignificant_decimal_zeros(self):
+        discount = Discount(None)
+        discount.template_ag_raw = pd.DataFrame(
+            {
+                "DISCOUNT TYPE": ["2", "1", "2"],
+                "SITE": ["101", "101", "101"],
+                "AG CODE": ["AG1", "AG2", "AG3"],
+                "GOLD CODE": ["GC1", "GC2", "GC3"],
+                "LV": ["1", "1", "1"],
+                "DISCOUNT VALUE": ["25000.00", "10.50%", "25000"],
+                "RAW START DATE": ["01/01/2026"] * 3,
+                "RAW END DATE": ["02/01/2026"] * 3,
+            }
+        )
+
+        discount._create_de()
+
+        self.assertEqual(
+            discount.template_de["VALUE ON INVOICE"].tolist(),
+            ["25000", "10.5", "25000"],
+        )
+
+    def test_dc_combines_501_and_201_rows(self):
+        discount = Discount(None)
+        discount.template_ag_raw = pd.DataFrame(
+            {
+                "DISCOUNT TYPE": ["3", "2"],
+                "SITE": ["101", "102"],
+                "SUPPLIER": ["SUP", "SUP"],
+                "CONTRACT": ["CON", "CON"],
+                "AG CODE": ["AG1", "AG2"],
+                "AG DESCRIPTION": ["Free", "Money"],
+                "ARTICLE START DATE": ["01/01/2026"] * 2,
+                "ARTICLE END DATE": ["02/01/2026"] * 2,
+                "GOLD CODE": ["GC1", "GC2"],
+                "LV": ["1", "1"],
+                "RAW START DATE": ["01/01/2026"] * 2,
+                "RAW END DATE": ["02/01/2026"] * 2,
+                "DISCOUNT VALUE": ["1T+1T", "25000"],
+            }
+        )
+
+        discount._create_dc()
+
+        self.assertEqual(discount.template_dc.columns.tolist(), ["NO", *column_dc])
+        self.assertEqual(set(discount.template_dc["DISCOUNT TYPE"]), {"501", "201"})
+        self.assertEqual(len(discount.template_dc), 2)
+
     def test_restores_exported_ag_raw_for_dc_de_generation(self):
         raw = pd.DataFrame(
             {

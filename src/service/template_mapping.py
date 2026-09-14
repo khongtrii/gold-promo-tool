@@ -658,6 +658,24 @@ class DiscountTypeMixin:
             return False
  
         return all(float(n) == 0 for n in numbers)
+
+    @staticmethod
+    def format_decimal_text(value) -> str:
+        """Remove percent signs and insignificant trailing decimal zeros."""
+        if pd.isna(value):
+            return ""
+        text = str(value).replace("%", "").strip()
+        if not text:
+            return ""
+        try:
+            number = Decimal(text.replace(",", "."))
+        except InvalidOperation:
+            return text
+        if not number.is_finite():
+            return text
+        if number == number.to_integral_value():
+            return format(number.quantize(Decimal("1")), "f")
+        return format(number.normalize(), "f")
  
 class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
     RAW_COLUMNS = [
@@ -685,6 +703,7 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         
         self.template_dc_free: Optional[pd.DataFrame] = None
         self.template_dc_money: Optional[pd.DataFrame] = None
+        self.template_dc: Optional[pd.DataFrame] = None
         
         self.template_de: Optional[pd.DataFrame] = None
 
@@ -883,6 +902,7 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         ag_raw = self._require_ag_raw()
         self.template_dc_free = None
         self.template_dc_money = None
+        self.template_dc = None
         
         mask_free = ag_raw["DISCOUNT TYPE"] == "3"
 
@@ -1006,6 +1026,18 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             template_dc_money = self.fast_stage(template_dc_money, have_no=True)
      
             self.template_dc_money = template_dc_money
+
+        dc_parts = [
+            frame.drop(columns=["NO"], errors="ignore")
+            for frame in (self.template_dc_free, self.template_dc_money)
+            if frame is not None and not frame.empty
+        ]
+        combined = (
+            pd.concat(dc_parts, ignore_index=True)
+            if dc_parts
+            else pd.DataFrame(columns=column_dc)
+        )
+        self.template_dc = self.fast_stage(combined, have_no=True)
  
         return self
 
@@ -1030,8 +1062,8 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         
         template_de = pd.DataFrame(template_de)
         
-        template_de["VALUE ON INVOICE"] = (
-            template_de["VALUE ON INVOICE"].fillna("").astype(str).str.replace("%", "").str.strip()
+        template_de["VALUE ON INVOICE"] = template_de["VALUE ON INVOICE"].map(
+            self.format_decimal_text
         )
 
         template_de = template_de[column_de]
