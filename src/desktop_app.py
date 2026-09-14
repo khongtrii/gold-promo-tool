@@ -793,7 +793,7 @@ class GoldPromoApp:
             self.add_sitegroup_button.pack_forget()
             self.stage1_validate_button.config(text="Validate Pipeline")
             self.stage1_status.config(
-                text="Check Attribute enabled: source must already contain complete SITE GROUP and SO values."
+                text="Check Attribute enabled: source must already contain complete SO values."
             )
         else:
             self.check_oa_button.pack(side="left", before=self.template_mapping_button)
@@ -1271,7 +1271,7 @@ class GoldPromoApp:
             etl._load_network()._load_src()
             self._load_discount_exceptions(etl)
             if self.stage1_check_attribute.get():
-                missing_columns = self._missing_sitegroup_or_so(etl)
+                missing_columns = self._missing_template_prerequisites(etl)
                 if missing_columns:
                     messagebox.showerror(
                         "Check Attribute source is incomplete",
@@ -1281,7 +1281,7 @@ class GoldPromoApp:
                         parent=self.root,
                     )
                     self.stage1_status.config(
-                        text="Stopped: Check Attribute requires existing SITE GROUP and SO values."
+                        text="Stopped: Check Attribute requires existing SO values."
                     )
                     return
                 etl.should_generate_so_sitegroup = False
@@ -1441,13 +1441,14 @@ class GoldPromoApp:
         finally:
             self._release_sitegroup_session()
 
-    @staticmethod
-    def _missing_sitegroup_or_so(etl: Template_ETL) -> list[str]:
+    def _missing_template_prerequisites(self, etl: Template_ETL) -> list[str]:
+        """Return source columns required for the active template workflow."""
         if etl.src is None:
-            return ["SITE GROUP", "SO"]
+            return ["SO"] if self.stage1_check_attribute.get() else ["SITE GROUP", "SO"]
+        required_columns = ("SO",) if self.stage1_check_attribute.get() else ("SITE GROUP", "SO")
         return [
             column
-            for column in ("SITE GROUP", "SO")
+            for column in required_columns
             if column not in etl.src.columns
             or etl.src[column].fillna("").astype(str).str.strip().eq("").any()
         ]
@@ -1456,7 +1457,7 @@ class GoldPromoApp:
         if self.stage1_check_attribute.get():
             guidance = (
                 ".\n\nCheck Attribute requires the selected source to already contain "
-                "complete SITE GROUP and SO values."
+                "complete SO values."
             )
         else:
             guidance = (
@@ -1536,12 +1537,15 @@ class GoldPromoApp:
 
     def _request_template_exports(self) -> set[str] | None:
         """Let the user choose which configuration templates to create."""
-        template_names = [
-            method_name
-            for method_name, _attribute in TEMPLATE_EXPORTS
-            if method_name != "add_attribute_marketing" or self.stage1_check_attribute.get()
-        ]
-        template_names.append("template_ag")
+        if self.stage1_check_attribute.get():
+            template_names = ["add_attribute_marketing", "template_ag"]
+        else:
+            template_names = [
+                method_name
+                for method_name, _attribute in TEMPLATE_EXPORTS
+                if method_name != "add_attribute_marketing"
+            ]
+            template_names.append("template_ag")
 
         dialog = Toplevel(self.root)
         dialog.title("Select templates")
@@ -1641,7 +1645,7 @@ class GoldPromoApp:
                 )
                 etl._load_network()._load_src()
                 self._load_discount_exceptions(etl)
-                missing_columns = self._missing_sitegroup_or_so(etl)
+                missing_columns = self._missing_template_prerequisites(etl)
                 if missing_columns:
                     self._show_incomplete_template_source(missing_columns)
                     return
@@ -1650,7 +1654,7 @@ class GoldPromoApp:
                 if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                     return
                 self.pending_etl = etl
-            missing_columns = self._missing_sitegroup_or_so(etl)
+            missing_columns = self._missing_template_prerequisites(etl)
             if missing_columns:
                 self._show_incomplete_template_source(missing_columns)
                 return
