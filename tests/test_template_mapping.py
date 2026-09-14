@@ -31,6 +31,35 @@ class AttributeMediumMappingTest(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(mapper.attribute_map(label), code)
 
+    def test_delete_rows_are_split_from_add_attribute_template(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "SO": ["SO1", "SO2", "SO2", "SO3"],
+                    "GOLD CODE": ["GC1", "GC2", "GC2", "GC3"],
+                    "LV": ["1", "2", "2", "3"],
+                    "LU": ["1", "1", "1", "1"],
+                    "ATTRIBUTE MARKETING": ["Hero", "please DELETE", "please delete", "delete hero"],
+                    "FREE PRODUCT": ["", "", "", ""],
+                }
+            ),
+            dict_network={},
+            plan=pd.DataFrame(),
+            cata="C01",
+            cata_description="",
+            cata_period="",
+        )
+
+        mapping = Template_Mapping(etl)._create_add_attribute_marketing()
+
+        self.assertEqual(mapping.gold_code_delete.to_dict("records"), [
+            {"GOLD CODE": "GC2", "LV": "2", "SO": "SO2"}
+        ])
+        self.assertEqual(
+            mapping.template_add_attribute_marketing["GOLD CODE"].tolist(),
+            ["GC1", "GC3"],
+        )
+
 
 class PromotionPlanMappingTest(unittest.TestCase):
     def test_description_contains_only_catalogue_description(self):

@@ -553,9 +553,10 @@ class Template_ETL:
 
             invalid_attribute = converted_attribute.isna()
             if self.check_attribute:
+                delete_attribute = attribute_text.str.contains("delete", case=False, na=False)
                 self._append_note_err(
                     data,
-                    data.index[invalid_attribute],
+                    data.index[invalid_attribute & ~delete_attribute],
                     self.ATTRIBUTE_MARKETING_ERROR,
                 )
             data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[

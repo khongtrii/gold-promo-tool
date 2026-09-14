@@ -697,7 +697,10 @@ class GoldPromoApp:
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 2))
 
         excluded_frame = ttk.LabelFrame(frame, text="SITE GROUP codes unavailable for new codes", padding=8)
-        excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
+        # Temporarily hidden now that every non-exact network receives a new
+        # Site Group code. Keep the controls and handlers available so this
+        # reservation editor can be restored later by re-enabling this grid.
+        # excluded_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
         excluded_frame.columnconfigure(0, weight=1)
         ttk.Entry(excluded_frame, textvariable=self.non_suggested_sitegroup_input, width=30).grid(
             row=0, column=0, sticky="ew", padx=(0, 6)
@@ -1697,6 +1700,16 @@ class GoldPromoApp:
                         self._output_file(group_output, attribute, timestamp),
                         finalize_with_excel=True,
                     )
+                    if (
+                        method_name == "add_attribute_marketing"
+                        and result.gold_code_delete is not None
+                        and not result.gold_code_delete.empty
+                    ):
+                        WorkbookExporter.write_template(
+                            result.gold_code_delete,
+                            self._output_file(group_output, "gold_code_delete", timestamp),
+                            finalize_with_excel=True,
+                        )
                     if method_name == "po_commitment":
                         WorkbookExporter.write_template(
                             result.template_po_commitment_report,

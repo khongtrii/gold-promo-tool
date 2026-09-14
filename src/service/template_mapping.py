@@ -224,6 +224,7 @@ class BaseTemplate(ContractMixin, StageMixin):
         self.template_po_commitment_report: Optional[pd.DataFrame] = None
         self.template_supplier_schedule: Optional[pd.DataFrame] = None
         self.template_add_attribute_marketing: Optional[pd.DataFrame] = None
+        self.gold_code_delete: Optional[pd.DataFrame] = None
         
 class CheckOAMixin:
     def _create_check_oa(self) -> "CheckOAMixin":
@@ -585,6 +586,19 @@ class AddAttributeMarketingMixin(AttributeMapMixin):
     def _create_add_attribute_marketing(self) -> "AddAttributeMarketingMixin":
         data = self.src
 
+        raw_attributes = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
+        mapped_attributes = raw_attributes.map(self.attribute_map)
+        delete_mask = (
+            mapped_attributes.eq(raw_attributes)
+            & raw_attributes.str.contains("delete", case=False, na=False)
+        )
+        self.gold_code_delete = (
+            data.loc[delete_mask, ["GOLD CODE", "LV", "SO"]]
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+        data = data.loc[~delete_mask]
+
         template_add_attribute_marketing = {
             column_add_attribute_marketing[0]: "1",
             column_add_attribute_marketing[1]: data["SO"],
@@ -597,9 +611,9 @@ class AddAttributeMarketingMixin(AttributeMapMixin):
 
         template_add_attribute_marketing = pd.DataFrame(template_add_attribute_marketing)
 
-        template_add_attribute_marketing["MEDIUM"] = template_add_attribute_marketing[
-            "MEDIUM"
-        ].map(self.attribute_map)
+        template_add_attribute_marketing["MEDIUM"] = template_add_attribute_marketing["MEDIUM"].map(
+            self.attribute_map
+        )
 
         template_add_attribute_marketing = template_add_attribute_marketing[
             column_add_attribute_marketing
