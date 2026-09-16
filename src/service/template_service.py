@@ -70,6 +70,10 @@ class Template_ETL:
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
     DISCOUNT_PERCENTAGE_LIMIT_ERROR = "DISCOUNT (% OR VALUE) không được vượt quá 100%."
+    ALLOWED_DIFFERENT_DISCOUNT_TYPE_PAIRS = {
+        frozenset(("1", "3")),
+        frozenset(("2", "3")),
+    }
 
     def __init__(
         self,
@@ -1856,7 +1860,7 @@ class Template_ETL:
                 continue
 
             message = (
-                f"Thiếu phân bổ đối với các cửa hàng: {', '.join(missing_sites)} "
+                f"Thiếu phân bổ đối với các cửa hàng: {';'.join(missing_sites)} "
                 "dựa trên PURCHASE NETWORK EXPANDED."
             )
 
@@ -1922,7 +1926,11 @@ class Template_ETL:
         group_columns = [*key_columns, "PURCHASE NETWORK EXPANDED"]
         conflicting_indices = set()
         for _, rows in comparison.groupby(group_columns, dropna=False):
-            if any(rows[column].nunique(dropna=False) > 1 for column in value_columns):
+            price_conflict = rows["NORMAL PURCHASE PRICE"].nunique(dropna=False) > 1
+            discount_conflict = self._has_invalid_discount_difference(
+                rows["DISCOUNT (% OR VALUE)"]
+            )
+            if price_conflict or discount_conflict:
                 conflicting_indices.update(rows["_SOURCE_INDEX"])
 
         if conflicting_indices:
@@ -1933,6 +1941,27 @@ class Template_ETL:
             )
 
         return data
+
+    @staticmethod
+    def _discount_type(value: str) -> str:
+        """Return the AG discount type used by the discount templates."""
+        text = "" if pd.isna(value) else str(value).strip()
+        if "+" in text:
+            return "3"
+        if "%" in text:
+            return "1"
+        return "2"
+
+    @classmethod
+    def _has_invalid_discount_difference(cls, discounts: pd.Series) -> bool:
+        """Allow different discounts only between type 1/3 or type 2/3."""
+        distinct = list(dict.fromkeys(discounts.fillna("").astype(str).str.strip()))
+        for index, left in enumerate(distinct):
+            for right in distinct[index + 1:]:
+                type_pair = frozenset((cls._discount_type(left), cls._discount_type(right)))
+                if type_pair not in cls.ALLOWED_DIFFERENT_DISCOUNT_TYPE_PAIRS:
+                    return True
+        return False
 
     def _validate_duplicate_purchase_information(
         self,

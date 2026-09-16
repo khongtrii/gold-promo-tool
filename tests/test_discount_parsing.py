@@ -10,6 +10,76 @@ from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    def test_discount_difference_allows_only_type_1_or_2_with_type_3(self):
+        allowed = [
+            pd.Series(["10%", "10+2"]),
+            pd.Series(["10000", "10TH+2TH"]),
+        ]
+        rejected = [
+            pd.Series(["10%", "20%"]),
+            pd.Series(["10000", "20000"]),
+            pd.Series(["10+2", "20TH+3TH"]),
+            pd.Series(["10%", "10000"]),
+            pd.Series(["10%", "20%", "10+2"]),
+        ]
+
+        for discounts in allowed:
+            with self.subTest(discounts=discounts.tolist()):
+                self.assertFalse(Template_ETL._has_invalid_discount_difference(discounts))
+        for discounts in rejected:
+            with self.subTest(discounts=discounts.tolist()):
+                self.assertTrue(Template_ETL._has_invalid_discount_difference(discounts))
+
+    def test_overlapping_network_applies_discount_type_exception(self):
+        etl = Template_ETL([])
+        base = {
+            "GOLD CODE": ["02043862", "02043862"],
+            "LV": ["1", "1"],
+            "PURCHASE NETWORK EXPANDED": ["1001", "1001"],
+            "NORMAL PURCHASE PRICE": ["10000", "10000"],
+        }
+
+        allowed = etl._validate_overlapping_price_or_discount(
+            pd.DataFrame(base | {"DISCOUNT (% OR VALUE)": ["10%", "10+2"]})
+        )
+        rejected = etl._validate_overlapping_price_or_discount(
+            pd.DataFrame(base | {"DISCOUNT (% OR VALUE)": ["10%", "10000"]})
+        )
+
+        self.assertTrue(allowed["NOTE ERR FROM MASTER DATA"].eq("").all())
+        self.assertTrue(
+            rejected["NOTE ERR FROM MASTER DATA"].str.contains(
+                "Thông tin mua hàng và chiết khấu bị trùng", regex=False
+            ).all()
+        )
+
+    def test_missing_allocations_are_combined_for_every_row_in_group(self):
+        etl = Template_ETL([])
+        etl.dict_network = {"store": ["101", "102"]}
+        data = pd.DataFrame(
+            {
+                "GOLD CODE": ["GC1", "GC1"],
+                "LV": ["1", "1"],
+                "LU": ["1", "1"],
+                "SUPPLIER CODE": ["SUP1", "SUP1"],
+                "COMMERCIAL CONTRACT": ["CON1", "CON1"],
+                "PURCHASE NETWORK EXPANDED": ["101", "102"],
+                "% DELIVERY 1": ["100", "100"],
+                "% DELIVERY 2": ["", ""],
+                "% DELIVERY 3": ["", ""],
+                "101": ["", ""],
+                "102": ["", ""],
+            }
+        )
+
+        result = etl._check_allocation(data)
+
+        expected = (
+            "Thiếu phân bổ đối với các cửa hàng: 101;102 "
+            "dựa trên PURCHASE NETWORK EXPANDED."
+        )
+        self.assertEqual(result["NOTE ERR FROM MASTER DATA"].tolist(), [expected, expected])
+
     def test_blank_discount_defaults_to_zero_percent(self):
         data = pd.DataFrame({"DISCOUNT (% OR VALUE)": [None, "", "  ", "10%"]})
 

@@ -18,7 +18,7 @@ from tkinter import BooleanVar, Listbox, Tk, StringVar, Toplevel, filedialog, me
 import pandas as pd
 import win32com.client as win32
 from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 import xlwt
 
@@ -74,11 +74,23 @@ TEMPLATE_OUTPUT_ORDER = {
     "template_po_commitment_report": 5,
     "template_purchase": 6,
     "template_supplier_schedule": 7,
+    "template_ag": 8,
+    "template_ag_raw": 8,
+    "report_ag_errors": 8,
+    "template_dc": 9,
+    "template_de": 10,
 }
 
 
 class WorkbookExporter:
     """Writes outputs while retaining the input workbook for error returns."""
+
+    NOTE_ERROR_FILL = PatternFill(fill_type="solid", fgColor="FFFF00")
+
+    @staticmethod
+    def _style_note_error_cell(cell, *, bold: bool = False) -> None:
+        cell.fill = copy(WorkbookExporter.NOTE_ERROR_FILL)
+        cell.font = Font(color="FFFF0000", bold=bold)
 
     _excel = None
 
@@ -186,13 +198,14 @@ class WorkbookExporter:
         source_sheet.insert_cols(note_column, 1)
         source_sheet.column_dimensions[get_column_letter(note_column)].width = 35
         note_cell = source_sheet.cell(7, note_column, "NOTE ERR FROM MASTER DATA")
-        note_cell.font = Font(bold=True)
+        WorkbookExporter._style_note_error_cell(note_cell, bold=True)
         note_cell.alignment = Alignment(horizontal="center")
 
         for _, row in errors.iterrows():
             note = row["NOTE ERR FROM MASTER DATA"]
             if not pd.isna(note) and str(note).strip():
-                source_sheet.cell(int(row["_SOURCE_ROW"]), note_column, str(note))
+                note_cell = source_sheet.cell(int(row["_SOURCE_ROW"]), note_column, str(note))
+                WorkbookExporter._style_note_error_cell(note_cell)
 
         source_workbook.save(str(output_path))
         source_workbook.close()
@@ -301,15 +314,17 @@ class WorkbookExporter:
                 ),
                 sheet.max_column + 1,
             )
-            sheet.cell(header_row, note_column, "NOTE ERR FROM MASTER DATA").font = Font(bold=True)
+            note_header = sheet.cell(header_row, note_column, "NOTE ERR FROM MASTER DATA")
+            WorkbookExporter._style_note_error_cell(note_header, bold=True)
             sheet.column_dimensions[get_column_letter(note_column)].width = 35
 
             for _, row in data.loc[data["NOTE ERR FROM MASTER DATA"].astype(str).str.strip().ne("")].iterrows():
-                sheet.cell(
+                note_cell = sheet.cell(
                     int(row["_SOURCE_ROW"]),
                     note_column,
                     str(row["NOTE ERR FROM MASTER DATA"]),
                 )
+                WorkbookExporter._style_note_error_cell(note_cell)
 
             workbook.save(output_path)
         finally:
