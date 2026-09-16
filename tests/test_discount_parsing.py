@@ -61,14 +61,16 @@ class DiscountParsingTest(unittest.TestCase):
                 "GOLD CODE": ["GC1", "GC1"],
                 "LV": ["1", "1"],
                 "LU": ["1", "1"],
-                "SUPPLIER CODE": ["SUP1", "SUP1"],
-                "COMMERCIAL CONTRACT": ["CON1", "CON1"],
+                "SUPPLIER CODE": ["SUP1", "SUP2"],
+                "COMMERCIAL CONTRACT": ["CON1", "CON2"],
                 "PURCHASE NETWORK EXPANDED": ["101", "102"],
                 "% DELIVERY 1": ["100", "100"],
                 "% DELIVERY 2": ["", ""],
                 "% DELIVERY 3": ["", ""],
-                "101": ["", ""],
-                "102": ["", ""],
+                # Values on another row must not satisfy the current row's
+                # PURCHASE NETWORK allocation requirement.
+                "101": ["", "1"],
+                "102": ["1", ""],
             }
         )
 

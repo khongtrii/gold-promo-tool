@@ -1784,8 +1784,6 @@ class Template_ETL:
             "GOLD CODE",
             "LV",
             "LU",
-            "SUPPLIER CODE",
-            "COMMERCIAL CONTRACT"
         ]
 
         data = self._ensure_note_err(data)
@@ -1815,39 +1813,33 @@ class Template_ETL:
         for _, idx in data.groupby(group_keys, dropna=False).groups.items():
             rows = data.loc[idx]
 
-            purchase_sites = set()
-            for pn in rows["PURCHASE NETWORK EXPANDED"]:
-                purchase_sites.update(
-                    site for site in self._parse_sites(pn)
+            missing_allocation_sites = set()
+            invalid_allocation_sites = set()
+            for _, row in rows.iterrows():
+                row_purchase_sites = {
+                    site for site in self._parse_sites(row["PURCHASE NETWORK EXPANDED"])
                     if site in site_columns
-                )
+                }
+                for site in row_purchase_sites:
+                    value = row[site]
+                    if pd.isna(value) or str(value).strip() == "":
+                        missing_allocation_sites.add(site)
+                        continue
+                    numeric_value = pd.to_numeric(pd.Series([value]), errors="coerce").iat[0]
+                    if (
+                        pd.isna(numeric_value)
+                        or numeric_value <= 0
+                        or numeric_value % 1 != 0
+                    ):
+                        invalid_allocation_sites.add(site)
 
-            missing_sites = sorted(
-                (
-                    site for site in purchase_sites
-                    if data.loc[idx, site].isna().all()
-                    or data.loc[idx, site].astype(str).str.strip().eq("").all()
-                ),
+            missing_sites = sorted(missing_allocation_sites, key=self._sort_key)
+            invalid_allocation_sites = sorted(
+                invalid_allocation_sites,
                 key=self._sort_key,
             )
 
-            invalid_allocation_sites = []
-            for site in purchase_sites:
-                values = data.loc[idx, site]
-                populated = values.notna() & values.astype(str).str.strip().ne("")
-                if not populated.any():
-                    continue
-                numeric_values = pd.to_numeric(values.loc[populated], errors="coerce")
-                invalid_values = (
-                    numeric_values.isna()
-                    | numeric_values.le(0)
-                    | numeric_values.mod(1).ne(0)
-                )
-                if invalid_values.any():
-                    invalid_allocation_sites.append(site)
-
             if invalid_allocation_sites:
-                invalid_allocation_sites.sort(key=self._sort_key)
                 self._append_note_err(
                     data,
                     idx,
