@@ -577,7 +577,7 @@ class GoldPromoApp:
         self.pending_wh_discounts = []
 
         self.stage1_source.set("")
-        self.stage1_master_data.set("")
+        self.stage1_master_data.set(default_master_data_path())
         self.stage1_output.set("")
         self.stage1_check_attribute.set(False)
         self.non_suggested_sitegroup_input.set("")
@@ -586,11 +586,11 @@ class GoldPromoApp:
         self.stage1_ag_raw.set("")
 
         self.stage2_source.set("")
-        self.stage2_master_data.set("")
+        self.stage2_master_data.set(default_master_data_path())
         self.stage2_attribute.set("")
         self.stage2_output.set("")
         self.stage3_source.set("")
-        self.stage3_master_data.set("")
+        self.stage3_master_data.set(default_master_data_path())
         self.stage3_output.set("")
         self.stage3_report_ag.set("")
         self.stage3_ag_raw.set("")
@@ -647,6 +647,14 @@ class GoldPromoApp:
             button.state(["disabled"])
         return button
 
+    def _metadata_row(self, parent: ttk.Frame, row: int, variable: StringVar) -> None:
+        ttk.Label(parent, text="Master data file").grid(
+            row=row, column=0, sticky="w", padx=(0, 8), pady=5
+        )
+        ttk.Label(parent, textvariable=variable, wraplength=600).grid(
+            row=row, column=1, columnspan=2, sticky="w", pady=5
+        )
+
     def _directory_row(self, parent: ttk.Frame, row: int, variable: StringVar) -> None:
         ttk.Label(parent, text="Output folder").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=5)
         ttk.Entry(parent, textvariable=variable, width=70).grid(row=row, column=1, sticky="ew", pady=5)
@@ -687,7 +695,7 @@ class GoldPromoApp:
         frame.columnconfigure(1, weight=1)
         excel_files = [("Excel files", "*.xlsx *.xlsm *.xls"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage1_source, excel_files)
-        self._file_row(frame, 1, "Master data file", self.stage1_master_data, excel_files)
+        self._metadata_row(frame, 1, self.stage1_master_data)
         self._directory_row(frame, 2, self.stage1_output)
 
         ttk.Button(
@@ -1047,7 +1055,7 @@ class GoldPromoApp:
         frame.columnconfigure(1, weight=1)
         excel_files = [("Excel files", "*.xlsx *.xlsm"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage2_source, excel_files)
-        self._file_row(frame, 1, "Master data file", self.stage2_master_data, excel_files)
+        self._metadata_row(frame, 1, self.stage2_master_data)
         self._file_row(frame, 2, "Attribute file", self.stage2_attribute, excel_files)
         self._directory_row(frame, 3, self.stage2_output)
         ttk.Separator(frame).grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
@@ -1061,7 +1069,7 @@ class GoldPromoApp:
         frame.columnconfigure(1, weight=1)
         excel_files = [("Excel files", "*.xlsx *.xlsm *.xls"), ("All files", "*.*")]
         self._source_file_row(frame, 0, self.stage3_source, excel_files)
-        self._file_row(frame, 1, "Master data file", self.stage3_master_data, excel_files)
+        self._metadata_row(frame, 1, self.stage3_master_data)
         self._directory_row(frame, 2, self.stage3_output)
         ttk.Separator(frame).grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
         ttk.Button(
@@ -1835,13 +1843,10 @@ class GoldPromoApp:
                 "Select valid AG raw template files:\n" + "\n".join(missing_raw_paths),
             )
             return
-        output = self._output_dir(output_variable)
-        if output is None:
-            return
         if raw_paths:
             try:
                 pending_discounts = [
-                    (output, Discount.from_ag_raw_file(path))
+                    (path, Discount.from_ag_raw_file(path))
                     for path in raw_paths
                 ]
             except Exception as error:
@@ -1865,9 +1870,25 @@ class GoldPromoApp:
                 "Select valid AG result report files:\n" + "\n".join(missing_paths),
             )
             return
+        selected = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose output folder for DC / DE templates",
+            initialdir=output_variable.get().strip() or str(Path.cwd()),
+        )
+        if not selected:
+            return
+        output_variable.set(selected)
+        output = self._output_dir(output_variable)
+        if output is None:
+            return
         timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
         try:
-            for group_output, pending_discount in pending_discounts:
+            for index, (original_output, pending_discount) in enumerate(pending_discounts, start=1):
+                group_output = output
+                if len(pending_discounts) > 1:
+                    group_name = original_output.stem if raw_paths else original_output.name
+                    group_output = output / f"{index}_{group_name}"
+                    group_output.mkdir(parents=True, exist_ok=True)
                 discount = pending_discount._update(paths)
                 if discount.report_err is not None and not discount.report_err.empty:
                     report_err = discount.report_err
