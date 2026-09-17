@@ -229,6 +229,8 @@ class BaseTemplate(ContractMixin, StageMixin):
 class CheckOAMixin:
     def _create_check_oa(self) -> "CheckOAMixin":
         data = self.src
+        global_period_start = self.plan["GLOBAL PERIOD START"].iloc[0]
+        global_period_end = self.plan["GLOBAL PERIOD END"].iloc[0]
 
         template_check_oa = {
             "STRUCTURE" : data['STRUCTURE'],
@@ -240,8 +242,8 @@ class CheckOAMixin:
             column_check_oa[4]: data["SUPPLIER CODE"],
             column_check_oa[5]: "1",
             column_check_oa[6]: data["COMMERCIAL CONTRACT"],
-            column_check_oa[7]: data["PP START DATE"].dt.strftime("%d/%m/%Y"),
-            column_check_oa[8]: data["PP END DATE"].dt.strftime("%d/%m/%Y"),
+            column_check_oa[7]: global_period_start.strftime("%d/%m/%Y"),
+            column_check_oa[8]: global_period_end.strftime("%d/%m/%Y"),
         }
 
         template_check_oa = pd.DataFrame(template_check_oa)

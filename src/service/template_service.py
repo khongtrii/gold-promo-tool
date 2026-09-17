@@ -189,6 +189,9 @@ class Template_ETL:
             self._check_required_data(data, required_columns)
             if data.empty:
                 raise ValueError(f"Source file has no metadata rows: {path.name}")
+            catalogue_start, catalogue_end = self._combine_date_columns(data, "CATALOGUE")
+            if catalogue_start.isna().any() or catalogue_end.isna().any():
+                raise ValueError(f"Invalid catalogue start/end date in source metadata: {path.name}")
 
         first_path, first_data = next(iter(metadata.items()))
         reference = first_data.loc[:, comparison_columns].fillna("").astype(str).reset_index(drop=True)
@@ -283,6 +286,41 @@ class Template_ETL:
             + data.loc[idx, "NOTE ERR FROM MASTER DATA"].ne("").map({True: " | ", False: ""})
             + message
         )
+
+    def _combine_date_columns(
+        self,
+        data: pd.DataFrame,
+        date_prefix: str,
+        error_prefix: str | None = None,
+    ) -> tuple[pd.Series, pd.Series]:
+        """Combine day/month/year columns and report invalid dates."""
+        error_prefix = error_prefix or date_prefix
+
+        def combine(kind: str) -> pd.Series:
+            columns = [
+                f"{date_prefix} {kind} DAY",
+                f"{date_prefix} {kind} MONTH",
+                f"{date_prefix} {kind} YEAR",
+            ]
+            components = data[columns].apply(pd.to_numeric, errors="coerce")
+            integer_components = components.notna() & components.eq(components.round())
+            valid_components = integer_components.all(axis=1)
+            text = components.round().astype("Int64").astype("string")
+            result = pd.to_datetime(
+                text[columns[0]] + "/" + text[columns[1]] + "/" + text[columns[2]],
+                format="%d/%m/%Y",
+                errors="coerce",
+            )
+            invalid = ~valid_components | result.isna()
+            if "NOTE ERR FROM MASTER DATA" in data.columns:
+                self._append_note_err(
+                    data,
+                    data.index[invalid],
+                    f"{error_prefix} {kind} DATE không hợp lệ.",
+                )
+            return result
+
+        return combine("START"), combine("END")
 
     @staticmethod
     def _normalize_decimal_number(value) -> str:
@@ -755,16 +793,8 @@ class Template_ETL:
         for column in ("PURCHASE NETWORK EXPANDED", "GOLD PROMO NETWORK EXPANDED"):
             data[column] = data[column].map(self._sort_network)
         data["STRUCTURE"] = data["FILE NAME"].map(self.dept)
-        data["PP START DATE"] = pd.to_datetime(
-            data["PP START DAY"].astype(str) + "/" + data["PP START MONTH"].astype(str)
-            + "/" + data["PP START YEAR"].astype(str),
-            format="%d/%m/%Y", errors="coerce",
-        )
-        data["PP END DATE"] = pd.to_datetime(
-            data["PP END DAY"].astype(str) + "/" + data["PP END MONTH"].astype(str)
-            + "/" + data["PP END YEAR"].astype(str),
-            format="%d/%m/%Y", errors="coerce",
-        )
+        self._ensure_note_err(data)
+        data["PP START DATE"], data["PP END DATE"] = self._combine_date_columns(data, "PP")
         data["COMMERCIAL CONTRACT"] = (
             data["COMMERCIAL CONTRACT"].fillna("").astype(str).map(self._contract_checking)
         )
@@ -914,6 +944,8 @@ class Template_ETL:
             dayfirst=True,
             format="mixed",
         )
+        if plan[date_columns_plan].isna().any(axis=1).any():
+            raise ValueError(f"CATALOGUE {self.cata} có ngày không hợp lệ trong Master data.")
 
         plan["SHOP ACTIVATION"] = (
             plan["CATALOGUE START DATE"] - pd.Timedelta(days=23)
@@ -2021,25 +2053,7 @@ class Template_ETL:
         return x[:4]
 
     def _convert_date(self, data: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
-        data["PP START DATE"] = pd.to_datetime(
-            data["PP START DAY"].astype(str)
-            + "/"
-            + data["PP START MONTH"].astype(str)
-            + "/"
-            + data["PP START YEAR"].astype(str),
-            format="%d/%m/%Y",
-            errors="coerce"
-        )
-
-        data["PP END DATE"] = pd.to_datetime(
-            data["PP END DAY"].astype(str)
-            + "/"
-            + data["PP END MONTH"].astype(str)
-            + "/"
-            + data["PP END YEAR"].astype(str),
-            format="%d/%m/%Y",
-            errors="coerce"
-        )
+        data["PP START DATE"], data["PP END DATE"] = self._combine_date_columns(data, "PP")
 
         today = pd.Timestamp.today().normalize()
 
@@ -2163,24 +2177,8 @@ class Template_ETL:
         data = self._validate_structure_gold_lv(data)
         
         def _convert_date_sp(data: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
-            data["SP START DATE"] = pd.to_datetime(
-                data["SP START DAY"].astype(str)
-                + "/"
-                + data["SP START MONTH"].astype(str)
-                + "/"
-                + data["SP START YEAR"].astype(str),
-                format="%d/%m/%Y",
-                errors="coerce"
-            )
-        
-            data["SP END DATE"] = pd.to_datetime(
-                data["SP END DAY"].astype(str)
-                + "/"
-                + data["SP END MONTH"].astype(str)
-                + "/"
-                + data["SP END YEAR"].astype(str),
-                format="%d/%m/%Y",
-                errors="coerce"
+            data["SP START DATE"], data["SP END DATE"] = self._combine_date_columns(
+                data, "SP"
             )
         
             today = pd.Timestamp.today().normalize()
