@@ -2081,6 +2081,50 @@ class Template_ETL:
 
         return data
 
+    def _validate_pp_dates_against_plan(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Validate PP dates against order dates for the row's delivery type."""
+        if self.plan is None or self.plan.empty:
+            raise ValueError(f"Không tìm thấy CATALOGUE {self.cata} trong Master data.")
+
+        self._ensure_note_err(data)
+        delivery_types = ("CROSS-DOCKING", "DIRECT", "VINAMILK")
+        normalized_delivery_type = (
+            data["DELIVERY TYPE"].fillna("").astype(str).str.strip()
+        )
+
+        for delivery_type in delivery_types:
+            row_mask = normalized_delivery_type.eq(delivery_type)
+            order_date_1_column = f"{delivery_type} | ORDER DATE 1"
+            order_date_3_column = f"{delivery_type} | ORDER DATE 3"
+            order_date_1 = self.plan[order_date_1_column].iloc[0]
+            order_date_3 = self.plan[order_date_3_column].iloc[0]
+
+            invalid_start = (
+                row_mask
+                & data["PP START DATE"].notna()
+                & data["PP START DATE"].ne(order_date_1)
+            )
+            self._append_note_err(
+                data,
+                data.index[invalid_start],
+                f"PP START DATE phải bằng {order_date_1_column} "
+                f"({order_date_1.strftime('%d/%m/%Y')}).",
+            )
+
+            invalid_end = (
+                row_mask
+                & data["PP END DATE"].notna()
+                & data["PP END DATE"].lt(order_date_3)
+            )
+            self._append_note_err(
+                data,
+                data.index[invalid_end],
+                f"PP END DATE phải lớn hơn hoặc bằng {order_date_3_column} "
+                f"({order_date_3.strftime('%d/%m/%Y')}).",
+            )
+
+        return data
+
     def _pipeline(self) -> "Template_ETL":
         data = self.src
 
@@ -2098,6 +2142,7 @@ class Template_ETL:
         data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)
         data = self._convert_date(data)
+        data = self._validate_pp_dates_against_plan(data)
 
         data = self._validate_duplicate_purchase_information(data)
         data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(self._contract_checking)

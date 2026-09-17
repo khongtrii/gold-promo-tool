@@ -1307,7 +1307,7 @@ class GoldPromoApp:
             self.export_src_button.state(["disabled"])
             self.report_button.state(["!disabled"])
             self.finish_discount_button.state(["!disabled"])
-            etl._pipeline()._load_plan()
+            etl._load_plan()._pipeline()
             if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                 self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
                 return
@@ -1687,7 +1687,7 @@ class GoldPromoApp:
                     return
                 etl.should_generate_so_sitegroup = False
                 etl.should_generate_so = False
-                etl._pipeline()._load_plan()
+                etl._load_plan()._pipeline()
                 if self._return_errors(sources, etl.src, output, "stage1", timestamp):
                     return
                 self.pending_etl = etl

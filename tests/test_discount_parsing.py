@@ -10,6 +10,50 @@ from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    def test_pp_dates_follow_delivery_type_order_dates_from_plan(self):
+        etl = Template_ETL([])
+        etl.cata = "C01"
+        etl.plan = pd.DataFrame(
+            {
+                "CROSS-DOCKING | ORDER DATE 1": [pd.Timestamp("2026-10-01")],
+                "CROSS-DOCKING | ORDER DATE 3": [pd.Timestamp("2026-10-03")],
+                "DIRECT | ORDER DATE 1": [pd.Timestamp("2026-10-04")],
+                "DIRECT | ORDER DATE 3": [pd.Timestamp("2026-10-06")],
+                "VINAMILK | ORDER DATE 1": [pd.Timestamp("2026-10-07")],
+                "VINAMILK | ORDER DATE 3": [pd.Timestamp("2026-10-09")],
+            }
+        )
+        data = pd.DataFrame(
+            {
+                "DELIVERY TYPE": [
+                    "CROSS-DOCKING",
+                    "DIRECT",
+                    "VINAMILK",
+                    "DIRECT",
+                ],
+                "PP START DATE": pd.to_datetime(
+                    ["2026-10-01", "2026-10-05", "2026-10-07", None]
+                ),
+                "PP END DATE": pd.to_datetime(
+                    ["2026-10-03", "2026-10-05", "2026-10-10", None]
+                ),
+            }
+        )
+
+        result = etl._validate_pp_dates_against_plan(data)
+
+        self.assertEqual(result.at[0, "NOTE ERR FROM MASTER DATA"], "")
+        self.assertIn(
+            "PP START DATE phải bằng DIRECT | ORDER DATE 1 (04/10/2026).",
+            result.at[1, "NOTE ERR FROM MASTER DATA"],
+        )
+        self.assertIn(
+            "PP END DATE phải lớn hơn hoặc bằng DIRECT | ORDER DATE 3 (06/10/2026).",
+            result.at[1, "NOTE ERR FROM MASTER DATA"],
+        )
+        self.assertEqual(result.at[2, "NOTE ERR FROM MASTER DATA"], "")
+        self.assertEqual(result.at[3, "NOTE ERR FROM MASTER DATA"], "")
+
     def test_blank_contract_reports_required_data_and_skips_contract_normalization(self):
         etl = Template_ETL([])
         etl.dict_network = {"wh": []}
