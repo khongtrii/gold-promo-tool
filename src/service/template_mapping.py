@@ -457,7 +457,15 @@ class PurchaseMixin:
 
         template_purchase = pd.DataFrame(template_purchase)
 
-        template_purchase["SITE"] = template_purchase["SITE"].str.split(";")
+        store_minigo = self.nw.get("store_minigo", [])
+        wh = self.nw.get("wh", [])
+        template_purchase["SITE"] = (
+            template_purchase["SITE"]
+            .fillna("")
+            .astype(str)
+            .str.split(";")
+            .map(lambda sites: sites + store_minigo + wh)
+        )
 
         template_purchase = template_purchase.explode("SITE")
 

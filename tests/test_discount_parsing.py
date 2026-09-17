@@ -10,6 +10,31 @@ from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    def test_blank_contract_reports_required_data_and_skips_contract_normalization(self):
+        etl = Template_ETL([])
+        etl.dict_network = {"wh": []}
+        data = pd.DataFrame(
+            {
+                "COMMERCIAL CONTRACT": [None, "   ", "ABCD1234"],
+                "NOTE ERR FROM MASTER DATA": ["", "", ""],
+            }
+        )
+
+        etl._check_required_data(data, ["COMMERCIAL CONTRACT"])
+        data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(
+            etl._contract_checking
+        )
+
+        self.assertEqual(data["COMMERCIAL CONTRACT"].tolist(), ["", "", "ABCD"])
+        self.assertEqual(
+            data["NOTE ERR FROM MASTER DATA"].tolist(),
+            [
+                "Các cột bắt buộc đang để trống: COMMERCIAL CONTRACT",
+                "Các cột bắt buộc đang để trống: COMMERCIAL CONTRACT",
+                "",
+            ],
+        )
+
     def test_discount_difference_allows_only_type_1_or_2_with_type_3(self):
         allowed = [
             pd.Series(["10%", "10+2"]),

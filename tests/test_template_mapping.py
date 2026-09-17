@@ -174,6 +174,39 @@ class POCommitmentMappingTest(unittest.TestCase):
 
 
 class PurchaseMappingTest(unittest.TestCase):
+    def test_always_adds_minigo_and_warehouse_sites(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "GOLD CODE": ["02043862"],
+                    "LV": ["1"],
+                    "NORMAL PURCHASE PRICE": [45100],
+                    "PURCHASE NETWORK EXPANDED": ["S1;S2"],
+                    "PP START DATE": [pd.Timestamp("2026-10-01")],
+                    "PP END DATE": [pd.Timestamp("2026-10-10")],
+                    "COMMERCIAL CONTRACT": ["CONT"],
+                    "PURCHASE VAT": ["10%"],
+                    "SUPPLIER CODE": ["SUP"],
+                }
+            ),
+            dict_network={
+                "store_minigo": ["M1", "M2"],
+                "wh": ["W1", "W2"],
+                "wh8": [],
+            },
+            plan=pd.DataFrame(),
+            cata="C01",
+            cata_description="Catalogue description",
+            cata_period="Period",
+        )
+
+        mapping = Template_Mapping(etl)._create_purchase()
+
+        self.assertEqual(
+            mapping.template_purchase["SITE"].tolist(),
+            ["S1", "S2", "M1", "M2", "W1", "W2"],
+        )
+
     def test_formats_whole_prices_and_removes_float_noise(self):
         etl = SimpleNamespace(
             src=pd.DataFrame(

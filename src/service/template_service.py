@@ -2042,15 +2042,22 @@ class Template_ETL:
         return data
 
     def _contract_checking(self, x):
-        if len(x) == 8:
-            if "YV000" in x:
-                return x
-            if x[5:] in self.dict_network.get("wh"):
-                return x
-            return x[:4]
-        if any(s in x for s in ("YV00", "YV0")):
-            return f"{x[:3]}YV000"
-        return x[:4]
+        if pd.isna(x):
+            return ""
+
+        contract = str(x).strip()
+        if not contract:
+            return ""
+
+        if len(contract) == 8:
+            if "YV000" in contract:
+                return contract
+            if contract[5:] in self.dict_network.get("wh", []):
+                return contract
+            return contract[:4]
+        if any(s in contract for s in ("YV00", "YV0")):
+            return f"{contract[:3]}YV000"
+        return contract[:4]
 
     def _convert_date(self, data: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
         data["PP START DATE"], data["PP END DATE"] = self._combine_date_columns(data, "PP")
