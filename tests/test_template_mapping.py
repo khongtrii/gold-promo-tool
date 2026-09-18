@@ -238,6 +238,92 @@ class PurchaseMappingTest(unittest.TestCase):
 
 
 class DiscountRawRestoreTest(unittest.TestCase):
+    def test_ag_number_normalization_pads_to_thirteen_characters(self):
+        self.assertEqual(Discount._normalize_ag_number(" 12345 "), "0000000012345")
+        self.assertEqual(Discount._normalize_ag_number("1234567890123"), "1234567890123")
+        self.assertEqual(Discount._normalize_ag_number("12345678901234"), "12345678901234")
+        self.assertEqual(Discount._normalize_ag_number("   "), "")
+        self.assertEqual(Discount._normalize_ag_number(None), "")
+
+    def test_created_ag_and_ag_raw_use_padded_ag_number(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "STRUCTURE": ["1"],
+                    "PURCHASE NETWORK EXPANDED": ["101"],
+                    "SUPPLIER CODE": ["12345"],
+                    "COMMERCIAL CONTRACT": ["CONT1234"],
+                    "GOLD CODE": ["GC1"],
+                    "LV": ["1"],
+                    "PP START DATE": [pd.Timestamp("2026-10-01")],
+                    "PP END DATE": [pd.Timestamp("2026-10-02")],
+                    "DISCOUNT (% OR VALUE)": ["10%"],
+                }
+            ),
+            dict_network={"store_minigo": [], "wh": [], "wh8": []},
+            exception_discount_gold_codes=set(),
+            cata="C01",
+        )
+
+        discount = Discount(etl)._create_ag_raw()._create_ag()
+
+        self.assertEqual(discount.template_ag_raw["AG NO"].tolist(), ["0012345010101"])
+        self.assertEqual(discount.template_ag["AG NO"].tolist(), ["0012345010101"])
+
+    def test_update_normalizes_report_agno_and_keeps_row_for_dc_and_de(self):
+        discount = Discount(None)
+        discount.template_ag_raw = pd.DataFrame(
+            {
+                "ACTION": ["0"],
+                "DEPARTMENT": ["010"],
+                "SITE": ["0101"],
+                "SUPPLIER": ["SUP"],
+                "CONTRACT": ["CONT"],
+                "AG NO": [" 12345 "],
+                "AG CODE": [""],
+                "AG DESCRIPTION": ["Description"],
+                "AG START DATE": ["01/10/2026"],
+                "AG END DATE": ["02/10/2026"],
+                "GOLD CODE": ["GC1"],
+                "LV": ["1"],
+                "ARTICLE START DATE": ["01/10/2026"],
+                "ARTICLE END DATE": ["02/10/2026"],
+                "LEVEL OF VALUE": ["0"],
+                "ERROR": [""],
+                "DISCOUNT VALUE": ["10%"],
+                "RAW START DATE": ["01/10/2026"],
+                "RAW END DATE": ["02/10/2026"],
+                "DISCOUNT TYPE": ["1"],
+            }
+        )
+        report = pd.DataFrame(
+            {
+                "ERRORMESS": [""],
+                "AG_CODE": ["AG-CODE-1"],
+                "ACTION": ["0"],
+                "DEPT": ["010"],
+                "SITE": ["0101"],
+                "SUPPLIER_CODE": ["SUP"],
+                "COMERCIAL_CONTRACT": ["CONT"],
+                "AGNO1": ["12345"],
+                "AG_DESC": ["Description"],
+                "AG_START_DATE": ["01/10/2026"],
+                "AG_END_DATE": ["02/10/2026"],
+                "ARTICLE_CODE": ["GC1"],
+                "LV": ["1"],
+                "ARTICLE_START_DATE": ["01/10/2026"],
+                "ARTICLE_END_DATE": ["02/10/2026"],
+            }
+        )
+
+        with patch("src.service.template_mapping.pd.read_excel", return_value=report):
+            discount._update("report.xlsx")._create_dc()._create_de()
+
+        self.assertEqual(discount.template_ag_raw["AG NO"].tolist(), ["0000000012345"])
+        self.assertEqual(discount.template_ag_raw["AG CODE"].tolist(), ["AG-CODE-1"])
+        self.assertEqual(len(discount.template_dc), 1)
+        self.assertEqual(len(discount.template_de), 1)
+
     def test_de_removes_insignificant_decimal_zeros(self):
         discount = Discount(None)
         discount.template_ag_raw = pd.DataFrame(

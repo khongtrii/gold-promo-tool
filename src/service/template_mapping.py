@@ -749,6 +749,13 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         if self.template_ag_raw is None:
             raise ValueError("Create template_ag before importing the AG report or creating discount templates.")
         return self.template_ag_raw
+
+    @staticmethod
+    def _normalize_ag_number(value) -> str:
+        if pd.isna(value):
+            return ""
+        text = str(value).strip()
+        return text.zfill(13) if text else ""
  
     def _create_ag_raw(self) -> "Discount":
         data = self.src
@@ -855,7 +862,9 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         sequence = key.groupby(key).cumcount() + 1
         sequence_str = sequence.apply(lambda x: f"{x:02d}")
  
-        column_ag5_value = supplier + site_padded + sequence_str
+        column_ag5_value = (supplier + site_padded + sequence_str).map(
+            self._normalize_ag_number
+        )
  
         template_ag_raw = {**template_ag_raw, column_ag[5]: column_ag5_value}
  
@@ -904,6 +913,9 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         missing_columns = [column for column in required_report_columns if column not in report.columns]
         if missing_columns:
             raise ValueError("AG report is missing required columns: " + ", ".join(missing_columns))
+
+        data["AG NO"] = data["AG NO"].map(self._normalize_ag_number)
+        report["AGNO1"] = report["AGNO1"].map(self._normalize_ag_number)
 
         error_mask = report["ERRORMESS"].fillna("").astype(str).str.strip().ne("")
         self.report_err = report.loc[error_mask].copy()
