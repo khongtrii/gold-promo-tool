@@ -53,7 +53,7 @@ required_cm: List[str] = [
 ]
 
 required_network: List[str] = [
-    'SITE','NATIONAL_SITE','GROUP_SITE','REGION_SITE', 'ACTIVE'
+    'SITE','NATIONAL_SITE','GROUP_SITE','REGION_SITE', 'ACTIVE', 'DISCOUNT'
 ]
 
 date_columns_plan: List[str] = ['CATALOGUE START DATE',

@@ -446,7 +446,7 @@ class PurchaseMixin:
             column_purchase[3]: data["NORMAL PURCHASE PRICE"].map(
                 self._format_purchase_price
             ),
-            column_purchase[4]: data["PURCHASE NETWORK EXPANDED"],
+            column_purchase[4]: data["DISCOUNT_NETWORK_EXPANDED"],
             column_purchase[5]: data["PP START DATE"].dt.strftime("%d/%m/%Y"),
             column_purchase[6]: data["PP END DATE"].dt.strftime("%d/%m/%Y"),
             column_purchase[7]: data["COMMERCIAL CONTRACT"],
@@ -597,11 +597,7 @@ class AddAttributeMarketingMixin(AttributeMapMixin):
         data = self.src
 
         raw_attributes = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
-        mapped_attributes = raw_attributes.map(self.attribute_map)
-        delete_mask = (
-            mapped_attributes.eq(raw_attributes)
-            & raw_attributes.str.contains("delete", case=False, na=False)
-        )
+        delete_mask = raw_attributes.str.contains("delete", case=False, na=False)
         self.gold_code_delete = (
             data.loc[delete_mask, ["GOLD CODE", "LV", "SO"]]
             .drop_duplicates()
@@ -777,7 +773,7 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
         template_ag_raw = {
             column_ag[0]: "0",
             column_ag[1]: "0" + data["STRUCTURE"].astype(str) + "0",
-            column_ag[2]: data["PURCHASE NETWORK EXPANDED"],
+            column_ag[2]: data["DISCOUNT_NETWORK_EXPANDED"],
             column_ag[3]: data["SUPPLIER CODE"],
             column_ag[4]: data["COMMERCIAL CONTRACT"],
             column_ag[6]: "",

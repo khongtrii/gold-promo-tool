@@ -53,11 +53,12 @@ class AttributeMediumMappingTest(unittest.TestCase):
         mapping = Template_Mapping(etl)._create_add_attribute_marketing()
 
         self.assertEqual(mapping.gold_code_delete.to_dict("records"), [
-            {"GOLD CODE": "GC2", "LV": "2", "SO": "SO2"}
+            {"GOLD CODE": "GC2", "LV": "2", "SO": "SO2"},
+            {"GOLD CODE": "GC3", "LV": "3", "SO": "SO3"},
         ])
         self.assertEqual(
             mapping.template_add_attribute_marketing["GOLD CODE"].tolist(),
-            ["GC1", "GC3"],
+            ["GC1"],
         )
 
 
@@ -181,7 +182,8 @@ class PurchaseMappingTest(unittest.TestCase):
                     "GOLD CODE": ["02043862"],
                     "LV": ["1"],
                     "NORMAL PURCHASE PRICE": [45100],
-                    "PURCHASE NETWORK EXPANDED": ["S1;S2"],
+                    "PURCHASE NETWORK EXPANDED": ["P1;P2"],
+                    "DISCOUNT_NETWORK_EXPANDED": ["S1;S2"],
                     "PP START DATE": [pd.Timestamp("2026-10-01")],
                     "PP END DATE": [pd.Timestamp("2026-10-10")],
                     "COMMERCIAL CONTRACT": ["CONT"],
@@ -215,6 +217,7 @@ class PurchaseMappingTest(unittest.TestCase):
                     "LV": ["1", "1", "1"],
                     "NORMAL PURCHASE PRICE": [45100.0, 45100.0000000001, 45100.25],
                     "PURCHASE NETWORK EXPANDED": ["S1", "S1", "S1"],
+                    "DISCOUNT_NETWORK_EXPANDED": ["S1", "S1", "S1"],
                     "PP START DATE": [pd.Timestamp("2026-10-01")] * 3,
                     "PP END DATE": [pd.Timestamp("2026-10-10")] * 3,
                     "COMMERCIAL CONTRACT": ["CONT"] * 3,
@@ -250,7 +253,8 @@ class DiscountRawRestoreTest(unittest.TestCase):
             src=pd.DataFrame(
                 {
                     "STRUCTURE": ["1"],
-                    "PURCHASE NETWORK EXPANDED": ["101"],
+                    "PURCHASE NETWORK EXPANDED": ["999"],
+                    "DISCOUNT_NETWORK_EXPANDED": ["101"],
                     "SUPPLIER CODE": ["12345"],
                     "COMMERCIAL CONTRACT": ["CONT1234"],
                     "GOLD CODE": ["GC1"],
@@ -267,6 +271,7 @@ class DiscountRawRestoreTest(unittest.TestCase):
 
         discount = Discount(etl)._create_ag_raw()._create_ag()
 
+        self.assertEqual(discount.template_ag_raw["SITE"].tolist(), ["101"])
         self.assertEqual(discount.template_ag_raw["AG NO"].tolist(), ["0012345010101"])
         self.assertEqual(discount.template_ag["AG NO"].tolist(), ["0012345010101"])
 

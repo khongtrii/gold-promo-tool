@@ -1,15 +1,42 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import pandas as pd
 from openpyxl import Workbook
 
-from src.constant.required import required_stage1
+from src.constant.required import required_cm, required_stage1
 from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    def test_validate_splits_delete_rows_with_or_without_attribute_check(self):
+        for check_attribute in (False, True):
+            with self.subTest(check_attribute=check_attribute):
+                data = pd.DataFrame({column: ["1"] * 5 for column in required_cm})
+                data["ATTRIBUTE MARKETING"] = ["delete hero", "please DELETE", "unknown", "", "Hero"]
+                data["GOLD CODE"] = ["GC1", "GC2", "GC3", "GC4", "GC5"]
+                data["SO"] = ["SO1", "SO2", "SO3", "SO4", "SO5"]
+                data.loc[:1, "NORMAL PURCHASE PRICE"] = "invalid"
+                etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
+                etl.dept = {"source.xlsx": "110"}
+                with patch.object(etl, "_load_source_metadata"), patch(
+                    "src.service.template_service.pd.read_excel", return_value=data
+                ):
+                    etl._load_src()
+                self.assertEqual(etl.src["GOLD CODE"].tolist(), ["GC3", "GC4", "GC5"])
+                self.assertEqual(etl.src["_SOURCE_ROW"].tolist(), [10, 11, 12])
+                self.assertEqual(etl.gold_code_delete["GOLD CODE"].tolist(), ["GC1", "GC2"])
+                self.assertEqual(etl.gold_code_delete["SO"].tolist(), ["SO1", "SO2"])
+                notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("")
+                if check_attribute:
+                    self.assertIn(etl.ATTRIBUTE_MARKETING_ERROR, notes.iloc[0])
+                    self.assertIn(etl.ATTRIBUTE_MARKETING_ERROR, notes.iloc[1])
+                else:
+                    self.assertEqual(notes.tolist(), ["", "", ""])
+                    self.assertEqual(etl.src["ATTRIBUTE MARKETING"].tolist(), ["unknown", "", "Hero"])
+
     def test_pp_dates_follow_delivery_type_order_dates_from_plan(self):
         etl = Template_ETL([])
         etl.cata = "C01"

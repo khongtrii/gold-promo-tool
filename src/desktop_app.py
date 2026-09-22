@@ -1163,6 +1163,28 @@ class GoldPromoApp:
             )
             yield self._group_output_dir(output, structure, file_name), grouped_etl
 
+    def _export_deleted_attributes(self, etl: Template_ETL, output: Path, timestamp: str) -> bool:
+        data = etl.gold_code_delete
+        if data is not None and not data.empty:
+            for (structure, file_name), rows in data.groupby(
+                ["STRUCTURE", "FILE NAME"], sort=False, dropna=False
+            ):
+                destination = self._group_output_dir(output, structure, file_name)
+                WorkbookExporter.write_template(
+                    rows[["GOLD CODE", "LV", "SO"]].drop_duplicates(),
+                    self._output_file(destination, "gold_code_delete", timestamp),
+                    finalize_with_excel=True,
+                )
+        if etl.src.empty:
+            self.pending_etl = None
+            self.stage1_status.config(text="No rows remain after filtering delete attributes.")
+            messagebox.showinfo(
+                "Validation complete",
+                "No rows remain to process. Delete rows were exported to gold_code_delete.",
+            )
+            return True
+        return False
+
     def _return_errors(
         self,
         sources: list[Path],
@@ -1263,6 +1285,8 @@ class GoldPromoApp:
                 check_attribute=self.stage1_check_attribute.get(),
             )
             etl._load_network()._load_src()
+            if self._export_deleted_attributes(etl, output, timestamp):
+                return
             self._load_discount_exceptions(etl)
             if self.stage1_check_attribute.get():
                 missing_columns = self._missing_template_prerequisites(etl)
@@ -1680,6 +1704,8 @@ class GoldPromoApp:
                     check_attribute=self.stage1_check_attribute.get(),
                 )
                 etl._load_network()._load_src()
+                if self._export_deleted_attributes(etl, output, timestamp):
+                    return
                 self._load_discount_exceptions(etl)
                 missing_columns = self._missing_template_prerequisites(etl)
                 if missing_columns:

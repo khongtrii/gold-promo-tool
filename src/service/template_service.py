@@ -124,6 +124,7 @@ class Template_ETL:
         }
 
         self.src: Optional[pd.DataFrame] = None
+        self.gold_code_delete: Optional[pd.DataFrame] = None
         self.non_warehouse_src: Optional[pd.DataFrame] = None
         self.src_listoff: Optional[pd.DataFrame] = None
         self.src_attr: Optional[pd.DataFrame] = None
@@ -363,6 +364,13 @@ class Template_ETL:
         self._check_required_columns(data, required_network)
         self._check_required_data(data, required_network)
 
+        discount_rows = data.loc[data["DISCOUNT"].eq("1")]
+        discount_groups = pd.concat([
+            discount_rows[[column, "SITE"]].rename(columns={column: "GROUP"})
+            for column in ("NATIONAL_SITE", "GROUP_SITE", "REGION_SITE")
+        ]).drop_duplicates().dropna()
+        discount_network = discount_groups.groupby("GROUP")["SITE"].agg(";".join).to_dict()
+
         data = data[data['ACTIVE'] == '1']
 
         NATIONAL_SITE = {
@@ -402,6 +410,7 @@ class Template_ETL:
 
         self.dict_network = {
             "network": network,
+            "DISCOUNT_NETWORK": discount_network,
             "store_hyper": store_hyper,
             "store_minigo": store_minigo,
             "store": store,
@@ -560,6 +569,7 @@ class Template_ETL:
     def _load_src(self, validate_source: bool = True) -> "Template_ETL":
         self._load_source_metadata()
         sources = []
+        deleted_sources = []
         for path in self.path_src:
             data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
@@ -567,11 +577,21 @@ class Template_ETL:
                 if col not in data.columns:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
+            if validate_source:
+                delete_mask = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.contains(
+                    "delete", case=False, na=False
+                )
+                deleted = data.loc[delete_mask, ["GOLD CODE", "LV", "SO"]].copy()
+                deleted["FILE NAME"] = path.name
+                deleted["STRUCTURE"] = self.dept[path.name]
+                deleted_sources.append(deleted)
+                data = data.loc[~delete_mask].copy()
             data = self._default_blank_discounts(data)
             required_source_data = required_stage1
             if not self.check_attribute:
                 required_source_data = [
-                    column for column in required_stage1 if column != "FREE PRODUCT"
+                    column for column in required_stage1
+                    if column not in {"FREE PRODUCT", "ATTRIBUTE MARKETING"}
                 ]
             if validate_source:
                 self._check_required_data(data, required_source_data)
@@ -585,25 +605,24 @@ class Template_ETL:
                 sources.append(data)
                 continue
 
-            converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
-            attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
-            for pattern, category in self.CATEGORY_RULES:
-                matched = converted_attribute.isna() & attribute_text.map(
-                    lambda text: bool(pattern.search(text))
-                )
-                converted_attribute.loc[matched] = category
-
-            invalid_attribute = converted_attribute.isna()
             if self.check_attribute:
-                delete_attribute = attribute_text.str.contains("delete", case=False, na=False)
+                converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
+                attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
+                for pattern, category in self.CATEGORY_RULES:
+                    matched = converted_attribute.isna() & attribute_text.map(
+                        lambda text: bool(pattern.search(text))
+                    )
+                    converted_attribute.loc[matched] = category
+
+                invalid_attribute = converted_attribute.isna()
                 self._append_note_err(
                     data,
-                    data.index[invalid_attribute & ~delete_attribute],
+                    data.index[invalid_attribute],
                     self.ATTRIBUTE_MARKETING_ERROR,
                 )
-            data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[
-                ~invalid_attribute
-            ]
+                data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[
+                    ~invalid_attribute
+                ]
 
             normalized_purchase_price = data["NORMAL PURCHASE PRICE"].map(
                 self._normalize_decimal_number
@@ -662,6 +681,10 @@ class Template_ETL:
             sources.append(data)
 
         self.src = pd.concat(sources, ignore_index=True)
+        self.gold_code_delete = (
+            pd.concat(deleted_sources, ignore_index=True).drop_duplicates().reset_index(drop=True)
+            if deleted_sources else None
+        )
         self.should_generate_so_sitegroup = True
         self.should_generate_so = True
 
@@ -748,6 +771,9 @@ class Template_ETL:
             # WH Discount consumes the Purchase Network exactly as supplied;
             # unlike Stage 1 it must not expand network groups from master data.
             data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"]
+            data["DISCOUNT_NETWORK_EXPANDED"] = data["PURCHASE NETWORK"].map(
+                self._normalize_network_punctuation
+            ).map(self._extract_discount_network)
             data["STRUCTURE"] = self.dept[path.name]
             data["FILE NAME"] = path.name
             data["_SOURCE_ROW"] = data.index + 8
@@ -789,6 +815,7 @@ class Template_ETL:
         for column in ("PURCHASE NETWORK", "GOLD PROMO NETWORK"):
             data[column] = data[column].map(self._normalize_network_punctuation)
         data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"].map(self._extract_network)
+        data["DISCOUNT_NETWORK_EXPANDED"] = data["PURCHASE NETWORK"].map(self._extract_discount_network)
         data["GOLD PROMO NETWORK EXPANDED"] = data["GOLD PROMO NETWORK"].map(self._extract_network)
         for column in ("PURCHASE NETWORK EXPANDED", "GOLD PROMO NETWORK EXPANDED"):
             data[column] = data[column].map(self._sort_network)
@@ -999,7 +1026,12 @@ class Template_ETL:
 
         return result
 
-    def _extract_network(self, expression: str, deduplicate: bool = True) -> str:
+    def _extract_discount_network(self, expression: str) -> str:
+        return self._sort_network(self._extract_network(expression, network_key="DISCOUNT_NETWORK"))
+
+    def _extract_network(
+        self, expression: str, deduplicate: bool = True, network_key: str = "network"
+    ) -> str:
         if pd.isna(expression) or expression is None:
             return ""
 
@@ -1069,7 +1101,7 @@ class Template_ETL:
             seen = set()
             for component in components:
                 for site in self._parse_sites(
-                    self._extract_network(component, deduplicate=deduplicate)
+                    self._extract_network(component, deduplicate=deduplicate, network_key=network_key)
                 ):
                     if not deduplicate or site not in seen:
                         seen.add(site)
@@ -1115,7 +1147,7 @@ class Template_ETL:
             result = []
             seen = set()
 
-            for site in self._expand(expression, self.dict_network.get("network")):
+            for site in self._expand(expression, self.dict_network.get(network_key)):
                 if not deduplicate or site not in seen:
                     seen.add(site)
                     result.append(site)
@@ -1128,7 +1160,7 @@ class Template_ETL:
         result = []
         seen = set()
 
-        for site in self._expand(base_token, self.dict_network.get("network")):
+        for site in self._expand(base_token, self.dict_network.get(network_key)):
             if not deduplicate or site not in seen:
                 seen.add(site)
                 result.append(site)
@@ -1138,7 +1170,7 @@ class Template_ETL:
         pattern = r'([+-])(\([^)]+\)|[^+-]+)'
 
         for op, value in re.findall(pattern, remain):
-            sites = self._expand(value, self.dict_network.get("network"))
+            sites = self._expand(value, self.dict_network.get(network_key))
 
             if op == "+":
                 for s in sites:
@@ -1267,10 +1299,14 @@ class Template_ETL:
 
         active_rows = ~data["_SKIP_NETWORK_CHECKS"]
         data["PURCHASE NETWORK EXPANDED"] = ""
+        data["DISCOUNT_NETWORK_EXPANDED"] = ""
         data["GOLD PROMO NETWORK EXPANDED"] = ""
         data.loc[active_rows, "PURCHASE NETWORK EXPANDED"] = data.loc[
             active_rows, "PURCHASE NETWORK"
         ].map(self._extract_network)
+        data.loc[active_rows, "DISCOUNT_NETWORK_EXPANDED"] = data.loc[
+            active_rows, "PURCHASE NETWORK"
+        ].map(self._extract_discount_network)
         data.loc[active_rows, "GOLD PROMO NETWORK EXPANDED"] = data.loc[
             active_rows, "GOLD PROMO NETWORK"
         ].map(self._extract_network)
@@ -2163,6 +2199,7 @@ class Template_ETL:
             *site_columns,
             "PURCHASE NETWORK EXPANDED",
             "GOLD PROMO NETWORK EXPANDED",
+            "DISCOUNT_NETWORK_EXPANDED",
             "PP START DATE",
             "PP END DATE"
         ]
