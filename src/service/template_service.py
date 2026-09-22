@@ -768,12 +768,28 @@ class Template_ETL:
                 numeric_discount.loc[valid_plain_discount].astype(float)
             )
 
-            # WH Discount consumes the Purchase Network exactly as supplied;
-            # unlike Stage 1 it must not expand network groups from master data.
+            # Keep the original purchase field; Discount uses its own expansion.
             data["PURCHASE NETWORK EXPANDED"] = data["PURCHASE NETWORK"]
             data["DISCOUNT_NETWORK_EXPANDED"] = data["PURCHASE NETWORK"].map(
                 self._normalize_network_punctuation
             ).map(self._extract_discount_network)
+            discount_wh = set(self._parse_sites(
+                self.dict_network.get("DISCOUNT_NETWORK", {}).get("8300", "")
+            ))
+            for index, expanded in data["DISCOUNT_NETWORK_EXPANDED"].items():
+                sites = set(self._parse_sites(expanded))
+                invalid_sites = sorted(sites - discount_wh, key=self._sort_key)
+                if not sites:
+                    self._append_note_err(
+                        data, pd.Index([index]),
+                        "PURCHASE NETWORK sau khi expand theo DISCOUNT_NETWORK bị rỗng.",
+                    )
+                elif invalid_sites:
+                    self._append_note_err(
+                        data, pd.Index([index]),
+                        "Site " + ";".join(invalid_sites)
+                        + " không thuộc WH (8300) của DISCOUNT_NETWORK.",
+                    )
             data["STRUCTURE"] = self.dept[path.name]
             data["FILE NAME"] = path.name
             data["_SOURCE_ROW"] = data.index + 8
@@ -1311,7 +1327,7 @@ class Template_ETL:
             active_rows, "GOLD PROMO NETWORK"
         ].map(self._extract_network)
 
-        valid_stores = set(self.dict_network.get("store", []))
+        valid_stores = set(self.dict_network.get("store_hyper", []))
 
         for _, idx in data.groupby(self.GROUP_COLS, dropna=False).groups.items():
             rows = data.loc[idx]
@@ -1364,7 +1380,7 @@ class Template_ETL:
                 invalid_sorted = sorted(invalid_sites, key=self._sort_key)
                 messages.append(
                     "Cửa hàng " + ";".join(invalid_sorted)
-                    + " không tồn tại trong danh sách SITE_STORE hiện tại"
+                    + " không thuộc network 8200 hiện tại"
                 )
 
             promo_variants = {
