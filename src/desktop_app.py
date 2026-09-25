@@ -1488,8 +1488,9 @@ class GoldPromoApp:
             self._release_sitegroup_session()
             return
         try:
-            etl.should_generate_so_sitegroup = False
+            etl.record_sitegroup_history()
             self._record_used_sitegroups(etl)
+            etl.should_generate_so_sitegroup = False
             self.add_sitegroup_button.state(["disabled"])
             self.template_mapping_button.state(["!disabled"])
             self.export_src_button.state(["!disabled"])
@@ -1497,6 +1498,9 @@ class GoldPromoApp:
             messagebox.showinfo("Site Group complete", "Site Groups are ready. You can now create the remaining templates.")
         except Exception as error:
             self.stage1_status.config(text="Add Site Group failed.")
+            self.add_sitegroup_button.state(["!disabled"])
+            self.template_mapping_button.state(["disabled"])
+            self.export_src_button.state(["disabled"])
             messagebox.showerror("Add Site Group failed", str(error), parent=self.root)
         finally:
             self._release_sitegroup_session()

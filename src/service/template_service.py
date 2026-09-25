@@ -9,6 +9,7 @@ from typing import List, Optional
 
 import pandas as pd
 from openpyxl import load_workbook
+from src.workbook_state import append_sitegroup_history, workbook_write_lock
 
 from src.constant.required import (
     date_columns_plan,
@@ -1663,6 +1664,10 @@ class Template_ETL:
     #     return True
 
     def update_sitegroup_file(self, suggestions: list[dict]) -> bool:
+        with workbook_write_lock(self.path_sitegroup):
+            return self._update_sitegroup_file_locked(suggestions)
+
+    def _update_sitegroup_file_locked(self, suggestions: list[dict]) -> bool:
             """Apply confirmed Site Group additions/removals to the master sheet."""
             duplicate_codes = self.validate_sitegroup_changes(suggestions)
             if duplicate_codes:
@@ -1803,6 +1808,23 @@ class Template_ETL:
             self.sitegroup_members.update(dict(new_rows))
             self.activated_sitegroup_codes.update(code for code, _ in new_rows)
             return True
+
+    def record_sitegroup_history(self) -> int:
+        """Record every resolved Site Group from every source in this run."""
+        if self.check_attribute:
+            return 0
+        if self.src is None or self.path_plan is None or not str(self.cata).strip():
+            raise ValueError("Source, master workbook and catalogue are required for SITE_GROUP_CHECK.")
+        columns = ["SITE GROUP", "GOLD PROMO NETWORK EXPANDED"]
+        self._check_required_columns(self.src, columns)
+        rows = set()
+        for group, network in self.src[columns].itertuples(index=False, name=None):
+            code = "" if pd.isna(group) else str(group).strip()
+            sites = self._unique_sorted_sites(network)
+            if not code or not sites:
+                raise ValueError("SITE_GROUP_CHECK requires a Site Group and sites for every source row.")
+            rows.update((str(self.cata).strip(), code, site) for site in sites)
+        return append_sitegroup_history(self.path_plan, rows)
 
     def apply_sitegroup_suggestions(self, suggestions: list[dict]) -> list[dict]:
         """Apply Site Group codes confirmed or entered by the user."""
