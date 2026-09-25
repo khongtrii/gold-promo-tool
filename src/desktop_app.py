@@ -735,7 +735,7 @@ class GoldPromoApp:
 
         ttk.Checkbutton(
             frame,
-            text="Check Attribute",
+            text="Mode Marketing",
             variable=self.stage1_check_attribute,
             command=self._on_check_attribute_changed,
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 2))
@@ -791,7 +791,7 @@ class GoldPromoApp:
             self.add_sitegroup_button.pack_forget()
             self.stage1_validate_button.config(text="Validate Pipeline")
             self.stage1_status.config(
-                text="Check Attribute enabled: source must already contain complete SO values."
+                text="Mode Marketing enabled: source must already contain complete SO values."
             )
         else:
             self.check_oa_button.pack(side="left", before=self.template_mapping_button)
@@ -1292,14 +1292,14 @@ class GoldPromoApp:
                 missing_columns = self._missing_template_prerequisites(etl)
                 if missing_columns:
                     messagebox.showerror(
-                        "Check Attribute source is incomplete",
-                        "Check Attribute requires complete values in the source for: "
+                        "Mode Marketing source is incomplete",
+                        "Mode Marketing requires complete values in the source for: "
                         + ", ".join(missing_columns)
                         + ".",
                         parent=self.root,
                     )
                     self.stage1_status.config(
-                        text="Stopped: Check Attribute requires existing SO values."
+                        text="Stopped: Mode Marketing requires existing SO values."
                     )
                     return
                 etl.should_generate_so_sitegroup = False
@@ -1347,11 +1347,11 @@ class GoldPromoApp:
                 self.pending_etl = etl
                 self.template_mapping_button.state(["!disabled"])
                 self.stage1_status.config(
-                    text="Validation with Check Attribute complete. You can create other templates."
+                    text="Validation with Mode Marketing complete. You can create other templates."
                 )
                 messagebox.showinfo(
                     "Pipeline complete",
-                    "Validation with Check Attribute is complete.\n\n"
+                    "Validation with Mode Marketing is complete.\n\n"
                     "You can now create the other templates.",
                 )
                 return
@@ -1516,7 +1516,7 @@ class GoldPromoApp:
     def _show_incomplete_template_source(self, missing_columns: list[str]) -> None:
         if self.stage1_check_attribute.get():
             guidance = (
-                ".\n\nCheck Attribute requires the selected source to already contain "
+                ".\n\nMode Marketing requires the selected source to already contain "
                 "complete SO values."
             )
         else:

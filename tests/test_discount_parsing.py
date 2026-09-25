@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pandas as pd
 from openpyxl import Workbook
 
-from src.constant.required import required_cm, required_stage1
+from src.constant.required import required_cm
 from src.service.template_service import Template_ETL
 
 
@@ -16,6 +16,7 @@ class DiscountParsingTest(unittest.TestCase):
             with self.subTest(check_attribute=check_attribute):
                 data = pd.DataFrame({column: ["1"] * 5 for column in required_cm})
                 data["ATTRIBUTE MARKETING"] = ["delete hero", "please DELETE", "unknown", "", "Hero"]
+                data["PURCHASE VAT"] = "10%"
                 data["GOLD CODE"] = ["GC1", "GC2", "GC3", "GC4", "GC5"]
                 data["SO"] = ["SO1", "SO2", "SO3", "SO4", "SO5"]
                 data.loc[:1, "NORMAL PURCHASE PRICE"] = "invalid"
@@ -373,27 +374,74 @@ class DiscountParsingTest(unittest.TestCase):
         self.assertEqual(result["SALE VAT"].tolist()[:2], ["10%", "KKKT"])
         self.assertEqual(result["PROMOTION SALE PRICE"].tolist()[:2], ["45100", "45100"])
         self.assertIn("SALE VAT chỉ được phép", result.at[2, "NOTE ERR FROM MASTER DATA"])
-        self.assertIn("SALE VAT chỉ được phép", result.at[3, "NOTE ERR FROM MASTER DATA"])
+        self.assertNotIn("SALE VAT chỉ được phép", result.at[3, "NOTE ERR FROM MASTER DATA"])
+        self.assertEqual(result.at[3, "SALE VAT"], "10%")
         self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[2, "NOTE ERR FROM MASTER DATA"])
         self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[3, "NOTE ERR FROM MASTER DATA"])
 
-    def test_free_product_is_required_only_with_check_attribute(self):
-        required_without_free_product = [
-            column
-            for column in required_stage1
-            if column != "FREE PRODUCT"
+    def test_validate_requires_valid_purchase_vat_with_or_without_attribute_check(self):
+        invalid_values = ["", "   ", None, float("nan"), "7%", "10", "invalid", "0.07", "inf", "NaN"]
+        valid_values = [
+            "0%", "5%", "8%", "10%", " kkkt ", "kct",
+            0, 0.05, 0.08, 0.1, "0.0", "0.050", " 0.08 ", "0.10", "0,08",
         ]
-        data = pd.DataFrame(
-            {column: ["value"] for column in required_without_free_product}
-            | {"FREE PRODUCT": [""]}
-        )
-        data["NOTE ERR FROM MASTER DATA"] = ""
+        expected = [
+            "0%", "5%", "8%", "10%", "KKKT", "KCT",
+            "0%", "5%", "8%", "10%", "0%", "5%", "8%", "10%", "8%",
+        ]
+        values = invalid_values + valid_values
+        sale = pd.DataFrame({"SALE VAT": values, "PROMOTION SALE PRICE": "100"})
+        Template_ETL([])._validate_stage2_sale_values(sale)
+        sale_notes = sale["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+        for note in sale_notes[:len(invalid_values)]:
+            self.assertIn("SALE VAT chỉ được phép", note)
+        self.assertEqual(sale_notes[len(invalid_values):], [""] * len(valid_values))
+        self.assertEqual(sale["SALE VAT"].tolist()[len(invalid_values):], expected)
+        for check_attribute in (False, True):
+            with self.subTest(check_attribute=check_attribute):
+                data = pd.DataFrame({column: ["1"] * len(values) for column in required_cm})
+                data["ATTRIBUTE MARKETING"] = "Hero"
+                data["PURCHASE VAT"] = values
+                etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
+                etl.dept = {"source.xlsx": "110"}
+                with patch.object(etl, "_load_source_metadata"), patch(
+                    "src.service.template_service.pd.read_excel", return_value=data
+                ):
+                    etl._load_src()
+                notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+                for note in notes[:len(invalid_values)]:
+                    self.assertIn(
+                        "PURCHASE VAT chỉ được phép là 0%, 5%, 8%, 10%, KKKT hoặc KCT.",
+                        note,
+                    )
+                self.assertEqual(notes[len(invalid_values):], [""] * len(valid_values))
+                self.assertEqual(
+                    etl.src["PURCHASE VAT"].tolist()[len(invalid_values):],
+                    expected,
+                )
 
-        Template_ETL._check_required_data(data, required_without_free_product)
-        self.assertEqual(data.at[0, "NOTE ERR FROM MASTER DATA"], "")
-
-        Template_ETL._check_required_data(data, required_stage1)
-        self.assertIn("FREE PRODUCT", data.at[0, "NOTE ERR FROM MASTER DATA"])
+    def test_validate_allows_blank_free_product_and_converts_hero(self):
+        labels = ["Front page", "Back page", "unbeat"]
+        for check_attribute in (False, True):
+            with self.subTest(check_attribute=check_attribute):
+                data = pd.DataFrame({column: ["1"] * 3 for column in required_cm})
+                data["ATTRIBUTE MARKETING"] = labels
+                data["PURCHASE VAT"] = "10%"
+                data["FREE PRODUCT"] = ["", None, float("nan")]
+                etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
+                etl.dept = {"source.xlsx": "110"}
+                with patch.object(etl, "_load_source_metadata"), patch(
+                    "src.service.template_service.pd.read_excel", return_value=data
+                ):
+                    etl._load_src()
+                self.assertEqual(
+                    etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist(),
+                    ["", "", ""],
+                )
+                self.assertEqual(
+                    etl.src["ATTRIBUTE MARKETING"].tolist(),
+                    ["HERO"] * 3 if check_attribute else labels,
+                )
 
 
 if __name__ == "__main__":

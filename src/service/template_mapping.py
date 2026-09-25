@@ -162,10 +162,7 @@ class AttributeMapMixin:
     """Map MEDIUM (free text) to the upload category code."""
 
     CATEGORY_RULES: Optional[List] = [
-        (re.compile(r"(?i)\bfront\s*page\b"), 1),
-        (re.compile(r"(?i)\bback\s*page\b"), 2),
-        (re.compile(r"(?i)\bunbeat\b"), 3),
-        (re.compile(r"(?i)\bhero\b"), 4),
+        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat|hero)\b"), 4),
         (re.compile(r"(?i)\b(?:star|buy\s*more\s*save\s*more)\b"), 5),
         (re.compile(r"(?i)\bmodel\b"), 6),
         (

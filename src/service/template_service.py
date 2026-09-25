@@ -1,4 +1,5 @@
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
 import re
@@ -51,10 +52,7 @@ class Template_ETL:
         (re.compile(r"(?i)\bbuy\s*more\s*save\s*more\b"), "STARP"),
     )
     CATEGORY_RULES = (
-        (re.compile(r"(?i)\bfront\s*page\b"), "FRONT PAGE"),
-        (re.compile(r"(?i)\bback\s*page\b"), "BACK PAGE"),
-        (re.compile(r"(?i)\bunbeat\b"), "UNBEAT"),
-        (re.compile(r"(?i)\bhero\b"), "HERO"),
+        (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat|hero)\b"), "HERO"),
         (re.compile(r"(?i)\b(?:star|buy\s*more\s*save\s*more)\b"), "STAR"),
         (re.compile(r"(?i)\bmodel\b"), "MODEL"),
         (
@@ -443,11 +441,32 @@ class Template_ETL:
 
         return data
 
+    @staticmethod
+    def _normalize_vat(value) -> str:
+        """Convert Excel percentage fractions to the supported VAT labels."""
+        if pd.isna(value):
+            return ""
+        text = str(value).strip().upper()
+        if text in VAT or not text:
+            return text
+        try:
+            fraction = Decimal(text.replace(",", "."))
+        except InvalidOperation:
+            return text
+        if not fraction.is_finite():
+            return text
+        return {
+            Decimal("0"): "0%",
+            Decimal("0.05"): "5%",
+            Decimal("0.08"): "8%",
+            Decimal("0.1"): "10%",
+        }.get(fraction, text)
+
     def _validate_stage2_sale_values(self, data: pd.DataFrame) -> pd.DataFrame:
         """Validate VAT and normalize valid Sale Price values to integers."""
         self._ensure_note_err(data)
 
-        data["SALE VAT"] = data["SALE VAT"].fillna("").astype(str).str.strip().str.upper()
+        data["SALE VAT"] = data["SALE VAT"].map(self._normalize_vat)
         invalid_vat = ~data["SALE VAT"].isin(VAT)
         self._append_note_err(
             data,
@@ -587,7 +606,9 @@ class Template_ETL:
                 deleted_sources.append(deleted)
                 data = data.loc[~delete_mask].copy()
             data = self._default_blank_discounts(data)
-            required_source_data = required_stage1
+            required_source_data = [
+                column for column in required_stage1 if column != "FREE PRODUCT"
+            ]
             if not self.check_attribute:
                 required_source_data = [
                     column for column in required_stage1
@@ -623,6 +644,13 @@ class Template_ETL:
                 data.loc[~invalid_attribute, "ATTRIBUTE MARKETING"] = converted_attribute.loc[
                     ~invalid_attribute
                 ]
+
+            data["PURCHASE VAT"] = data["PURCHASE VAT"].map(self._normalize_vat)
+            self._append_note_err(
+                data,
+                data.index[~data["PURCHASE VAT"].isin(VAT)],
+                "PURCHASE VAT chỉ được phép là 0%, 5%, 8%, 10%, KKKT hoặc KCT.",
+            )
 
             normalized_purchase_price = data["NORMAL PURCHASE PRICE"].map(
                 self._normalize_decimal_number

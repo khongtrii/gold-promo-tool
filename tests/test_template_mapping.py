@@ -17,9 +17,9 @@ class AttributeMediumMappingTest(unittest.TestCase):
     def test_maps_all_supported_medium_labels_to_numeric_codes(self):
         mapper = AttributeMapMixin()
         expected = {
-            "FRONT PAGE": 1,
-            "BACK PAGE": 2,
-            "UNBEAT": 3,
+            "FRONT PAGE": 4,
+            "BACK PAGE": 4,
+            "UNBEAT": 4,
             "HERO": 4,
             "STAR": 5,
             "MODEL": 6,
