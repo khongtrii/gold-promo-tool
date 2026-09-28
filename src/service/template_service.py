@@ -606,6 +606,14 @@ class Template_ETL:
                 deleted["STRUCTURE"] = self.dept[path.name]
                 deleted_sources.append(deleted)
                 data = data.loc[~delete_mask].copy()
+            if validate_source and self.check_attribute:
+                blank_free_product = data["FREE PRODUCT"].fillna("").astype(str).str.strip().eq("")
+                has_discount = data["DISCOUNT (% OR VALUE)"].fillna("").astype(str).str.strip().ne("")
+                self._append_note_err(
+                    data,
+                    data.index[blank_free_product & has_discount],
+                    "FREE PRODUCT không được để trống khi DISCOUNT (% OR VALUE) có dữ liệu.",
+                )
             data = self._default_blank_discounts(data)
             required_source_data = [
                 column for column in required_stage1 if column != "FREE PRODUCT"

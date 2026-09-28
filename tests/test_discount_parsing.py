@@ -428,6 +428,7 @@ class DiscountParsingTest(unittest.TestCase):
                 data["ATTRIBUTE MARKETING"] = labels
                 data["PURCHASE VAT"] = "10%"
                 data["FREE PRODUCT"] = ["", None, float("nan")]
+                data["DISCOUNT (% OR VALUE)"] = ["", None, float("nan")]
                 etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
                 etl.dept = {"source.xlsx": "110"}
                 with patch.object(etl, "_load_source_metadata"), patch(
@@ -442,6 +443,25 @@ class DiscountParsingTest(unittest.TestCase):
                     etl.src["ATTRIBUTE MARKETING"].tolist(),
                     ["HERO"] * 3 if check_attribute else labels,
                 )
+
+    def test_attribute_requires_free_product_only_when_source_discount_is_present(self):
+        discounts = ["10%", "1000", "1+1", "0", "0%", "", None, float("nan"), "  ", "10%"]
+        for check_attribute in (False, True):
+            with self.subTest(check_attribute=check_attribute):
+                data = pd.DataFrame({column: ["1"] * len(discounts) for column in required_cm})
+                data["ATTRIBUTE MARKETING"] = "Hero"
+                data["PURCHASE VAT"] = "10%"
+                data["FREE PRODUCT"] = ["", None, float("nan"), "  ", "", "", None, "", "  ", "Gift"]
+                data["DISCOUNT (% OR VALUE)"] = discounts
+                etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
+                etl.dept = {"source.xlsx": "110"}
+                with patch.object(etl, "_load_source_metadata"), patch(
+                    "src.service.template_service.pd.read_excel", return_value=data
+                ):
+                    etl._load_src()
+                notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+                error = "FREE PRODUCT không được để trống khi DISCOUNT (% OR VALUE) có dữ liệu."
+                self.assertEqual(notes, [error] * 5 + [""] * 5 if check_attribute else [""] * 10)
 
 
 if __name__ == "__main__":
