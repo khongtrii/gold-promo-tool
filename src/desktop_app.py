@@ -1602,7 +1602,7 @@ class GoldPromoApp:
     def _request_template_exports(self) -> set[str] | None:
         """Let the user choose which configuration templates to create."""
         if self.stage1_check_attribute.get():
-            template_names = ["add_attribute_marketing", "template_ag"]
+            template_names = ["purchase", "add_attribute_marketing", "template_ag"]
         else:
             template_names = [
                 method_name
