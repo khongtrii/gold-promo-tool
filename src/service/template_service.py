@@ -527,7 +527,17 @@ class Template_ETL:
         )
         # data.columns = [str(column).strip() for column in data.columns]
         # self._check_required_columns(data, list(self.ATTRIBUTE_COLUMNS))
-        data = data.loc[:, self.ATTRIBUTE_COLUMNS].dropna(how="all").copy()
+        # Attribute workbooks may repeat POSITION/PAGE/THEMATIC in an earlier
+        # layout block. The rightmost block contains the actual attribute data.
+        header_values = raw_data.iloc[header_row].map(
+            lambda value: str(value).strip() if pd.notna(value) else ""
+        ).tolist()
+        attribute_positions = [
+            max(index for index, value in enumerate(header_values) if value == column)
+            for column in self.ATTRIBUTE_COLUMNS
+        ]
+        data = data.iloc[:, attribute_positions].dropna(how="all").copy()
+        data.columns = list(self.ATTRIBUTE_COLUMNS)
         data = self._ensure_note_err(data)
         required_attribute_data = [
             column

@@ -1159,7 +1159,7 @@ class SalePrice(StageMixin):
             column_attr[1]: data["GOLD CODE"],
             column_attr[2]: data["SV"],
             column_attr[3]: data["CLASS"],
-            column_attr[4]: f"{self.etl.cata}D",
+            column_attr[4]: self.etl.cata if re.fullmatch(r"BF\d+", self.etl.cata, re.IGNORECASE) else f"{self.etl.cata}D",
             column_attr[5]: data["Alphanum"],
             column_attr[6]: "",
             column_attr[7]: "",

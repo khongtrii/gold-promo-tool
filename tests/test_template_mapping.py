@@ -30,6 +30,22 @@ class SalePriceAttributeTest(unittest.TestCase):
         result = SalePrice(etl)._create_attr().template_attr
         self.assertEqual(result["NOTE COUNT"].tolist(), [2, 2])
 
+    def test_bf_catalogue_code_has_no_d_suffix(self):
+        etl = SimpleNamespace(
+            src_listoff=None,
+            src_attr=pd.DataFrame({
+                "GOLD CODE": ["02094686"],
+                "SV": ["1"],
+                "CLASS": ["CATAP"],
+                "Alphanum": ["OTHER.P.3.8200"],
+                "START DATE": ["08/10/2026"],
+                "END DATE": ["21/10/2026"],
+            }),
+            cata="BF621",
+        )
+        result = SalePrice(etl)._create_attr().template_attr
+        self.assertEqual(result["CODE"].tolist(), ["BF621"])
+
 
 class AttributeMediumMappingTest(unittest.TestCase):
     def test_maps_all_supported_medium_labels_to_numeric_codes(self):

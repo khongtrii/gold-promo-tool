@@ -2118,15 +2118,19 @@ class GoldPromoApp:
                 attribute_etl = source_etl or Template_ETL(None)
                 attribute_etl.path_attribute = attribute
                 attribute_etl.path_plan = master_data
-                if not attribute_etl.cata:
+                bf_catalogue = re.search(r"(?i)BF\d+", attribute.stem)
+                if bf_catalogue:
+                    attribute_etl.cata = bf_catalogue.group(0).upper()
+                elif not attribute_etl.cata:
                     catalogue = re.search(r"(?i)C\d+", attribute.stem)
                     attribute_etl.cata = catalogue.group(0).upper() if catalogue else ""
+                attribute_output = attribute.parent if bf_catalogue else output
                 attribute_etl._load_plan()._load_attribute(attribute_sheet)
-                if not self._return_attribute_errors(attribute_etl, output, timestamp):
+                if not self._return_attribute_errors(attribute_etl, attribute_output, timestamp):
                     sale_price = SalePrice(attribute_etl)._create_attr()
                     attribute_prefix = attribute.stem
                     check_path = self._output_file(
-                        output,
+                        attribute_output,
                         f"{attribute_prefix}_template_attr_file_check",
                         timestamp,
                     )
@@ -2141,7 +2145,7 @@ class GoldPromoApp:
                     )
                     upload_attr = sale_price.fast_stage(upload_attr, have_no=True)
                     output_path = self._output_file(
-                        output,
+                        attribute_output,
                         f"{attribute_prefix}_template_attr",
                         timestamp,
                     )
