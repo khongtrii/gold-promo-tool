@@ -95,6 +95,25 @@ class DiscountNetworkTest(unittest.TestCase):
             etl._load_src_wh_discount()
         self.assertIn("không thuộc WH", etl.src.at[1, "NOTE ERR FROM MASTER DATA"])
 
+    def test_stage3_rejects_plain_number_plus_number_discount(self):
+        values = ["10+5", "10T+5TH", "10", "10%"]
+        data = pd.DataFrame({column: ["1"] * len(values) for column in required_wh_discount})
+        data["DISCOUNT (% OR VALUE)"] = values
+        data["PURCHASE NETWORK"] = "101"
+        data["PP START YEAR"] = "2099"
+        data["PP END YEAR"] = "2099"
+        data["PP END DAY"] = "2"
+        etl = Template_ETL([Path("source.xlsx")])
+        etl.dept = {"source.xlsx": "110"}
+        with patch.object(etl, "_load_source_metadata"), patch(
+            "src.service.template_service.pd.read_excel", return_value=data
+        ):
+            etl.dict_network = {"DISCOUNT_NETWORK": {"8300": "101"}}
+            etl._load_src_wh_discount()
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+        self.assertIn("số+số", notes[0])
+        self.assertEqual(notes[1:], ["", "", ""])
+
 
 if __name__ == "__main__":
     unittest.main()

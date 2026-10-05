@@ -790,6 +790,14 @@ class Template_ETL:
             self._append_note_err(
                 data, data.index[invalid_discount], self.DISCOUNT_VALUE_ERROR
             )
+            non_warehouse_discount = discount_text.str.fullmatch(
+                self.NON_WAREHOUSE_DISCOUNT, na=False
+            )
+            self._append_note_err(
+                data,
+                data.index[non_warehouse_discount],
+                "Stage 3 không cho phép DISCOUNT dạng số+số; chỉ chấp nhận số, số% hoặc sốT/TH+sốT/TH.",
+            )
             percentage_over_limit = discount_text.map(self._percentage_discount_exceeds_limit)
             self._append_note_err(
                 data,

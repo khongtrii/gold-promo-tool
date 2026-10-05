@@ -1138,7 +1138,7 @@ class GoldPromoApp:
     def _output_file(output: Path, name: str, timestamp: str, suffix: str = ".xls") -> Path:
         order = TEMPLATE_OUTPUT_ORDER.get(name)
         prefix = f"{order}_" if order is not None else ""
-        return output / f"{prefix}{name}_{timestamp}{suffix}"
+        return output / f"{prefix}{name.upper()}_{timestamp}{suffix}"
 
     @staticmethod
     def _group_output_dir(output: Path, structure, file_name) -> Path:
@@ -1230,7 +1230,7 @@ class GoldPromoApp:
 
         attribute_path = etl.path_attribute
         suffix = attribute_path.suffix if attribute_path.suffix.lower() in {".xlsx", ".xlsm"} else ".xlsx"
-        error_path = output / f"{attribute_path.stem}_attribute_errors_{timestamp}{suffix}"
+        error_path = output / f"{attribute_path.stem}_ATTRIBUTE_ERRORS_{timestamp}{suffix}"
         WorkbookExporter.write_attribute_errors(
             attribute_path,
             etl.attribute_sheet_name,
@@ -1251,7 +1251,7 @@ class GoldPromoApp:
         paths = []
         for (structure, file_name), source_data in data.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
             destination = GoldPromoApp._group_output_dir(output, structure, file_name)
-            path = destination / f"{Path(str(file_name)).stem}_non_warehouse_{timestamp}.xlsx"
+            path = destination / f"{Path(str(file_name)).stem}_NON_WAREHOUSE_{timestamp}.xlsx"
             source_data.drop(columns=["_SOURCE_ROW"], errors="ignore").to_excel(path, index=False)
             paths.append(path)
         return paths
@@ -1274,7 +1274,7 @@ class GoldPromoApp:
         if sources is None or paths is None or output is None:
             return
         master_data = paths[0]
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             self.stage1_status.config(text="Loading and validating Stage 1…")
             self.root.update_idletasks()
@@ -1382,7 +1382,7 @@ class GoldPromoApp:
         output = self._output_dir(self.stage1_output)
         if output is None:
             return
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             if etl is None or etl.src is None:
                 sources = self._source_paths(self.stage1_source)
@@ -1685,7 +1685,7 @@ class GoldPromoApp:
         output = self._output_dir(self.stage1_output)
         if output is None:
             return
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             self.stage1_status.config(text="Creating template mapping from the processed src…")
             if etl is None or etl.src is None or etl.src.empty:
@@ -1828,7 +1828,7 @@ class GoldPromoApp:
         output = self._output_dir(self.stage1_output)
         if output is None:
             return
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             paths = []
             sources_by_name = {source.name: source for source in etl.path_src}
@@ -1837,7 +1837,7 @@ class GoldPromoApp:
                 source_name = Path(str(file_name)).stem
                 source = sources_by_name[str(file_name)]
                 suffix = source.suffix if source.suffix.lower() in {".xlsx", ".xlsm"} else ".xlsx"
-                path = processed_output / f"{source_name}_processed_{timestamp}{suffix}"
+                path = processed_output / f"{source_name}_PROCESSED_{timestamp}{suffix}"
                 WorkbookExporter.write_processed_source(
                     source,
                     data,
@@ -1926,7 +1926,7 @@ class GoldPromoApp:
         output = self._output_dir(output_variable)
         if output is None:
             return
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             for index, (original_output, pending_discount) in enumerate(pending_discounts, start=1):
                 group_output = output
@@ -1982,7 +1982,7 @@ class GoldPromoApp:
         if sources is None or output is None or master_paths is None:
             return
         master_data = master_paths[0]
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
             self.pending_wh_discounts = []
             self.stage3_report_button.state(["!disabled"])
@@ -2078,7 +2078,7 @@ class GoldPromoApp:
         attribute_sheet = self._choose_attribute_sheet(attribute) if attribute is not None else None
         if attribute is not None and attribute_sheet is None:
             return
-        timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
+        timestamp = datetime.now().strftime("%d%m_%H%M")
         created = []
         source_etl = None
         self.stage2_status.config(text="Loading and validating Stage 2…")

@@ -11,14 +11,14 @@ from src.desktop_app import GoldPromoApp, WorkbookExporter
 class WorkbookExporterTest(unittest.TestCase):
     def test_discount_output_numbers_continue_after_other_templates(self):
         output = Path("output")
-        timestamp = "160926_120000"
+        timestamp = "1609_1200"
 
         expected = {
-            "template_ag": "8_template_ag_160926_120000.xls",
-            "template_ag_raw": "8_template_ag_raw_160926_120000.xls",
-            "report_ag_errors": "8_report_ag_errors_160926_120000.xls",
-            "template_dc": "9_template_dc_160926_120000.xls",
-            "template_de": "10_template_de_160926_120000.xls",
+            "template_ag": "8_TEMPLATE_AG_1609_1200.xls",
+            "template_ag_raw": "8_TEMPLATE_AG_RAW_1609_1200.xls",
+            "report_ag_errors": "8_REPORT_AG_ERRORS_1609_1200.xls",
+            "template_dc": "9_TEMPLATE_DC_1609_1200.xls",
+            "template_de": "10_TEMPLATE_DE_1609_1200.xls",
         }
         for name, file_name in expected.items():
             with self.subTest(name=name):

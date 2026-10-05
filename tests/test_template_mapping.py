@@ -10,7 +10,25 @@ from src.constant.template import (
     column_promotion_plan,
     column_purchase,
 )
-from src.service.template_mapping import AttributeMapMixin, Discount, Template_Mapping
+from src.service.template_mapping import AttributeMapMixin, Discount, SalePrice, Template_Mapping
+
+
+class SalePriceAttributeTest(unittest.TestCase):
+    def test_note_count_is_added_after_attribute_columns_are_selected(self):
+        etl = SimpleNamespace(
+            src_listoff=None,
+            src_attr=pd.DataFrame({
+                "GOLD CODE": ["GC1", "GC1"],
+                "SV": ["1", "1"],
+                "CLASS": ["C", "C"],
+                "Alphanum": ["A", "B"],
+                "START DATE": ["01/01/2026"] * 2,
+                "END DATE": ["31/12/2026"] * 2,
+            }),
+            cata="C01",
+        )
+        result = SalePrice(etl)._create_attr().template_attr
+        self.assertEqual(result["NOTE COUNT"].tolist(), [2, 2])
 
 
 class AttributeMediumMappingTest(unittest.TestCase):

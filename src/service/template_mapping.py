@@ -1168,7 +1168,7 @@ class SalePrice(StageMixin):
             column_attr[10]: data["END DATE"],
         })
 
-        self.template_attr = self.fast_stage(template_attr[column_attr], have_no=True)
+        self.template_attr = self.fast_stage(template_attr[column_attr[:-1]], have_no=True)
 
         note_count = self.template_attr.groupby([column_attr[1], column_attr[2]], dropna=False)[
             column_attr[1]
