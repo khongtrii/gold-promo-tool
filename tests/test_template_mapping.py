@@ -11,6 +11,7 @@ from src.constant.template import (
     column_purchase,
 )
 from src.service.template_mapping import AttributeMapMixin, Discount, SalePrice, Template_Mapping
+from src.service.template_service import Template_ETL
 
 
 class SalePriceAttributeTest(unittest.TestCase):
@@ -226,6 +227,7 @@ class PurchaseMappingTest(unittest.TestCase):
                 }
             ),
             dict_network={
+                "DISCOUNT_NETWORK": {"8710": "M1;M2", "8300": "W1;W2"},
                 "store_minigo": ["M1", "M2"],
                 "wh": ["W1", "W2"],
                 "wh8": [],
@@ -272,6 +274,75 @@ class PurchaseMappingTest(unittest.TestCase):
             mapping.template_purchase[column_purchase[3]].tolist(),
             ["45100", "45100", "45100.25"],
         )
+
+
+class DiscountSupplementNetworkTest(unittest.TestCase):
+    def setUp(self):
+        self.etl = Template_ETL([])
+        network = pd.DataFrame({
+            "SITE": ["201", "202", "839", "801"],
+            "NATIONAL_SITE": ["8710", "8710", "8300", "8300"],
+            "GROUP_SITE": ["8710", "8710", "8300", "8300"],
+            "REGION_SITE": ["8710", "8710", "8300", "8300"],
+            "ACTIVE": ["0", "1", "0", "1"],
+            "DISCOUNT": ["1", "0", "1", "0"],
+        })
+        with patch("src.service.template_service.pd.read_excel", return_value=network):
+            self.etl._load_network()
+        self.etl.src = pd.DataFrame({
+            "GOLD CODE": ["GC1"], "LV": ["1"], "STRUCTURE": ["110"],
+            "NORMAL PURCHASE PRICE": [100], "DISCOUNT_NETWORK_EXPANDED": ["101"],
+            "PP START DATE": [pd.Timestamp("2099-01-01")],
+            "PP END DATE": [pd.Timestamp("2099-01-02")],
+            "COMMERCIAL CONTRACT": ["CONT"], "PURCHASE VAT": ["10%"],
+            "SUPPLIER CODE": ["12345"], "DISCOUNT (% OR VALUE)": ["10%"],
+        })
+
+    def assert_sites(self, expected_purchase, expected_discount):
+        purchase = Template_Mapping(self.etl)._create_purchase().template_purchase
+        discount = Discount(self.etl)._create_ag_raw()._create_ag()
+        self.assertCountEqual(purchase["SITE"].tolist(), expected_purchase)
+        for frame in (discount.template_ag_raw, discount.template_ag):
+            self.assertCountEqual(frame["SITE"].tolist(), expected_discount)
+
+    def test_supplements_use_discount_flags_independently_of_active(self):
+        self.assert_sites(["101", "201", "839"], ["101", "201", "839"])
+        self.assertEqual(self.etl.dict_network["store_minigo"], ["202"])
+        self.assertEqual(self.etl.dict_network["wh"], ["801"])
+
+    def test_warehouse_discount_conditions_and_zero_discount_are_preserved(self):
+        for value, exception, sites in (
+            ("10", False, ["101", "201", "839"]),
+            ("10+5", False, ["101", "201"]),
+            ("10T+5TH", False, ["101", "201", "839"]),
+            ("10+5", True, ["101", "201", "839"]),
+            ("0", False, []),
+        ):
+            with self.subTest(value=value, exception=exception):
+                self.etl.src["DISCOUNT (% OR VALUE)"] = value
+                self.etl.exception_discount_gold_codes = {"GC1"} if exception else set()
+                self.assert_sites(["101", "201", "839"], sites)
+
+    def test_missing_or_empty_groups_do_not_fall_back_to_active_sites(self):
+        for groups in (None, {}, {"8710": " ; ", "8300": ""},
+                       {"8710": None, "8300": None}):
+            with self.subTest(groups=groups):
+                if groups is None:
+                    self.etl.dict_network.pop("DISCOUNT_NETWORK", None)
+                else:
+                    self.etl.dict_network["DISCOUNT_NETWORK"] = groups
+                self.assert_sites(["101"], ["101"])
+
+    def test_existing_sites_and_empty_tokens_do_not_create_extra_rows(self):
+        self.etl.src["DISCOUNT_NETWORK_EXPANDED"] = "101;201;839"
+        self.etl.dict_network["DISCOUNT_NETWORK"] = {
+            "8710": " ;201;; ", "8300": "839; ;839;",
+        }
+        self.assert_sites(["101", "201", "839"], ["101", "201", "839"])
+
+    def test_wh_ag_does_not_add_configured_supplements(self):
+        discount = Discount(self.etl, ag_type="WH")._create_ag_raw()._create_ag()
+        self.assertEqual(discount.template_ag["SITE"].tolist(), ["101"])
 
 
 class DiscountRawRestoreTest(unittest.TestCase):

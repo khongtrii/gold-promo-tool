@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from src.service.template_service import Template_ETL
+from src.service.template_mapping import Discount
 from src.constant.required import required_wh_discount
 
 
@@ -94,6 +95,71 @@ class DiscountNetworkTest(unittest.TestCase):
         ):
             etl._load_src_wh_discount()
         self.assertIn("không thuộc WH", etl.src.at[1, "NOTE ERR FROM MASTER DATA"])
+
+    def _load_wh_networks(self, expressions, wh_sites="801;802;809"):
+        data = pd.DataFrame({column: ["1"] * len(expressions) for column in required_wh_discount})
+        data["PURCHASE NETWORK"] = expressions
+        data["GOLD CODE"] = [str(index + 1) for index in range(len(expressions))]
+        data["PP START YEAR"] = "2099"
+        data["PP END YEAR"] = "2099"
+        data["PP END DAY"] = "2"
+        etl = Template_ETL([Path("source.xlsx")])
+        etl.dept = {"source.xlsx": "110"}
+        etl.dict_network = {"DISCOUNT_NETWORK": {"8300": wh_sites}, "wh8": []}
+        with patch.object(etl, "_load_source_metadata"), patch(
+            "src.service.template_service.pd.read_excel", return_value=data
+        ):
+            etl._load_src_wh_discount()
+        return etl
+
+    def test_stage3_adds_839_after_expansion_and_passes_it_to_ag(self):
+        expressions = ["802", "809", "802;809", "801", "8300", "8300(-839)"]
+        etl = self._load_wh_networks(expressions)
+        expected = ["802;839", "809;839", "802;809;839", "801",
+                    "801;802;809;839", "801;802;809;839"]
+        self.assertEqual(etl.src["DISCOUNT_NETWORK_EXPANDED"].tolist(), expected)
+        self.assertEqual(etl.src["NOTE ERR FROM MASTER DATA"].tolist(), [""] * len(expressions))
+        for column in ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"):
+            self.assertEqual(etl.src[column].tolist(), expressions)
+        discount = Discount(etl, ag_type="WH")._create_ag_raw()._create_ag()
+        for frame in (discount.template_ag_raw, discount.template_ag):
+            for index, sites in enumerate(expected):
+                self.assertEqual(
+                    sorted(frame.loc[frame["GOLD CODE"].eq(str(index + 1)), "SITE"].tolist()),
+                    sites.split(";"),
+                )
+
+    def test_stage3_deduplicates_839_and_adds_it_back_after_exclusion(self):
+        etl = self._load_wh_networks(
+            ["802;839", "8300", "8300(-839)", "839"], wh_sites="802;809;839"
+        )
+        self.assertEqual(etl.src["DISCOUNT_NETWORK_EXPANDED"].tolist(),
+                         ["802;839", "802;809;839", "802;809;839", "839"])
+        self.assertEqual(etl.src["NOTE ERR FROM MASTER DATA"].tolist(), [""] * 4)
+
+    def test_stage3_still_validates_original_sites_before_adding_839(self):
+        etl = self._load_wh_networks(["839", "802;839", "802;999", "8300-8300", "809"],
+                                     wh_sites="801;802")
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].tolist()
+        for index, site in ((0, "839"), (1, "839"), (2, "999"), (4, "809")):
+            self.assertIn(f"Site {site} không thuộc WH", notes[index])
+        self.assertIn("bị rỗng", notes[3])
+        etl = self._load_wh_networks(["8300"], wh_sites="802")
+        etl.dict_network["DISCOUNT_NETWORK"]["8310"] = "802;839"
+        with patch.object(etl, "_load_source_metadata"), patch(
+            "src.service.template_service.pd.read_excel",
+            return_value=etl.src.assign(**{"PURCHASE NETWORK": "8310"}),
+        ):
+            etl._load_src_wh_discount()
+        self.assertIn("Site 839 không thuộc WH", etl.src.at[0, "NOTE ERR FROM MASTER DATA"])
+
+    def test_stage1_network_check_does_not_add_839(self):
+        data = pd.DataFrame({
+            "FILE NAME": ["source.xlsx"], "GOLD CODE": ["GC1"], "LV": ["1"], "LU": ["1"],
+            "PURCHASE NETWORK": ["802;809"], "GOLD PROMO NETWORK": ["802;809"],
+        })
+        result = self.etl._check_network(data)
+        self.assertEqual(result.at[0, "DISCOUNT_NETWORK_EXPANDED"], "802;809")
 
     def test_stage3_rejects_plain_number_plus_number_discount(self):
         values = ["10+5", "10T+5TH", "10", "10%"]

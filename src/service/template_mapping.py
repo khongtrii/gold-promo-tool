@@ -454,8 +454,9 @@ class PurchaseMixin:
 
         template_purchase = pd.DataFrame(template_purchase)
 
-        store_minigo = self.nw.get("store_minigo", [])
-        wh = self.nw.get("wh", [])
+        discount_network = self.nw.get("DISCOUNT_NETWORK", {})
+        store_minigo = Template_ETL._parse_sites(discount_network.get("8710", ""))
+        wh = Template_ETL._parse_sites(discount_network.get("8300", ""))
         template_purchase["SITE"] = (
             template_purchase["SITE"]
             .fillna("")
@@ -802,11 +803,9 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             ~template_ag_raw["DISCOUNT VALUE"].apply(self.is_zero_discount)
         ].reset_index(drop=True)
  
-        # template_ag_raw[column_ag[2]] = template_ag_raw[column_ag[2]].str.split(";")
-        # template_ag_raw[column_ag[2]] = template_ag_raw[column_ag[2]] + etl.dict_network.get("store_minigo") + etl.dict_network.get("wh")
-
-        store_minigo = etl.dict_network.get("store_minigo", [])
-        wh = etl.dict_network.get("wh", [])
+        discount_network = self.nw.get("DISCOUNT_NETWORK", {})
+        store_minigo = Template_ETL._parse_sites(discount_network.get("8710", ""))
+        wh = Template_ETL._parse_sites(discount_network.get("8300", ""))
         warehouse_exception = (
             template_ag_raw["GOLD CODE"]
             .fillna("")

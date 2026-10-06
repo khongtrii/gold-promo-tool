@@ -845,6 +845,12 @@ class Template_ETL:
                         "Site " + ";".join(invalid_sites)
                         + " không thuộc WH (8300) của DISCOUNT_NETWORK.",
                     )
+                # Only the automatically added site bypasses WH validation.
+                if sites.intersection({"802", "809"}):
+                    sites.add("839")
+                    data.at[index, "DISCOUNT_NETWORK_EXPANDED"] = ";".join(
+                        sorted(sites, key=self._sort_key)
+                    )
             data["STRUCTURE"] = self.dept[path.name]
             data["FILE NAME"] = path.name
             data["_SOURCE_ROW"] = data.index + 8
