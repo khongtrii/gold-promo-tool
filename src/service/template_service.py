@@ -36,6 +36,10 @@ class Template_ETL:
     NON_WAREHOUSE_DISCOUNT = re.compile(
         rf"^{DISCOUNT_NUMBER}\+{DISCOUNT_NUMBER}$"
     )
+    CARTON_DISCOUNT = re.compile(
+        rf"^{DISCOUNT_NUMBER}(?:T|TH)\+{DISCOUNT_NUMBER}(?:T|TH)$",
+        re.IGNORECASE,
+    )
     ATTRIBUTE_COLUMNS = (
         "GOLD CODE",
         "SV",
@@ -69,6 +73,9 @@ class Template_ETL:
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
     DISCOUNT_PERCENTAGE_LIMIT_ERROR = "DISCOUNT (% OR VALUE) không được vượt quá 100%."
+    EXCEPTION_CARTON_DISCOUNT_ERROR = (
+        "GOLD CODE ngoại lệ không được cài chiết khấu thùng (T/TH)."
+    )
     ALLOWED_DIFFERENT_DISCOUNT_TYPE_PAIRS = {
         frozenset(("1", "3")),
         frozenset(("2", "3")),
@@ -352,6 +359,38 @@ class Template_ETL:
         blank = data[column].fillna("").astype(str).str.strip().eq("")
         data.loc[blank, column] = "0%"
         return data
+
+    def _validate_exception_carton_discounts(self) -> "Template_ETL":
+        """Reject carton discounts for the current exception Gold Codes."""
+        if self.src is None or self.src.empty:
+            return self
+        required = {"GOLD CODE", "DISCOUNT (% OR VALUE)"}
+        if not required.issubset(self.src.columns):
+            return self
+
+        data = self._ensure_note_err(self.src)
+        error_message = self.EXCEPTION_CARTON_DISCOUNT_ERROR
+        data["NOTE ERR FROM MASTER DATA"] = data["NOTE ERR FROM MASTER DATA"].map(
+            lambda note: " | ".join(
+                part
+                for part in str(note).split(" | ")
+                if part and part != error_message
+            )
+        )
+        discount_text = (
+            data["DISCOUNT (% OR VALUE)"]
+            .fillna("")
+            .astype(str)
+            .str.replace(r"\s+", "", regex=True)
+        )
+        gold_codes = data["GOLD CODE"].fillna("").astype(str).str.strip()
+        invalid = gold_codes.isin(self.exception_discount_gold_codes) & discount_text.str.fullmatch(
+            self.CARTON_DISCOUNT,
+            na=False,
+        )
+        self._append_note_err(data, data.index[invalid], error_message)
+        self.src = data
+        return self
 
     def _load_network(self) -> "Template_ETL":
         data = pd.read_excel(

@@ -86,6 +86,15 @@ class WorkbookExporter:
     """Writes outputs while retaining the input workbook for error returns."""
 
     NOTE_ERROR_FILL = PatternFill(fill_type="solid", fgColor="FFFF00")
+    COMBINED_PROCESSED_EXCLUDED_COLUMNS = {
+        "_SOURCE_ROW",
+        "NOTE ERR FROM MASTER DATA",
+        "PURCHASE NETWORK EXPANDED",
+        "GOLD PROMO NETWORK EXPANDED",
+        "DISCOUNT_NETWORK_EXPANDED",
+        "PP START DATE",
+        "PP END DATE",
+    }
 
     @staticmethod
     def _style_note_error_cell(cell, *, bold: bool = False) -> None:
@@ -292,6 +301,31 @@ class WorkbookExporter:
             workbook.save(output_path)
         finally:
             workbook.close()
+
+    @staticmethod
+    def write_combined_processed_source(
+        processed: pd.DataFrame,
+        output_path: Path,
+        *,
+        include_sitegroup: bool = True,
+    ) -> None:
+        """Write a flat workbook for reconciling all processed source rows."""
+        excluded = set(WorkbookExporter.COMBINED_PROCESSED_EXCLUDED_COLUMNS)
+        if not include_sitegroup:
+            excluded.add("SITE GROUP")
+
+        workflow_columns = [
+            column
+            for column in ("SITE GROUP", "SO", "FILE NAME")
+            if column in processed.columns and column not in excluded
+        ]
+        source_columns = [
+            column
+            for column in processed.columns
+            if column not in excluded and column not in workflow_columns
+        ]
+        combined = processed.loc[:, [*source_columns, *workflow_columns]].copy()
+        combined.to_excel(output_path, sheet_name="Processed", index=False)
 
     @staticmethod
     def write_attribute_errors(
@@ -865,6 +899,7 @@ class GoldPromoApp:
             return []
         codes = get_exception_discount_gold_codes(state_path)
         etl.exception_discount_gold_codes = set(codes)
+        etl._validate_exception_carton_discounts()
         return codes
 
     def show_exception_discount_gold_codes(self) -> None:
@@ -901,6 +936,7 @@ class GoldPromoApp:
                 code_list.insert("end", code)
             if self.pending_etl is not None:
                 self.pending_etl.exception_discount_gold_codes = set(codes)
+                self.pending_etl._validate_exception_carton_discounts()
 
         def add_codes() -> None:
             codes = [
@@ -1405,6 +1441,10 @@ class GoldPromoApp:
                 direct_etl.prepare_check_oa_without_validation()._load_plan()
                 self.pending_etl = direct_etl
                 etl = direct_etl
+            etl._validate_exception_carton_discounts()
+            if self._return_errors(list(etl.path_src), etl.src, output, "stage1", timestamp):
+                self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
+                return
             self.stage1_status.config(text="Creating Check OA file from the processed src…")
             self.root.update_idletasks()
             output_paths = []
@@ -1725,6 +1765,10 @@ class GoldPromoApp:
             if missing_columns:
                 self._show_incomplete_template_source(missing_columns)
                 return
+            etl._validate_exception_carton_discounts()
+            if self._return_errors(list(etl.path_src), etl.src, output, "stage1", timestamp):
+                self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
+                return
             selected_templates = self._request_template_exports()
             if selected_templates is None:
                 self.stage1_status.config(text="Create Other Templates cancelled.")
@@ -1830,6 +1874,10 @@ class GoldPromoApp:
             return
         timestamp = datetime.now().strftime("%d%m_%H%M")
         try:
+            etl._validate_exception_carton_discounts()
+            if self._return_errors(list(etl.path_src), etl.src, output, "stage1", timestamp):
+                self.stage1_status.config(text="Stopped: validation errors were returned to the output folder.")
+                return
             paths = []
             sources_by_name = {source.name: source for source in etl.path_src}
             for (structure, file_name), data in etl.src.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
@@ -1845,7 +1893,15 @@ class GoldPromoApp:
                     include_sitegroup=not etl.should_generate_so_sitegroup,
                 )
                 paths.append(str(path))
-            self.stage1_status.config(text=f"Processed source files exported to {len(paths)} output folder(s).")
+            if len(etl.path_src) > 1:
+                combined_path = output / f"ALL_PROCESSED_{timestamp}.xlsx"
+                WorkbookExporter.write_combined_processed_source(
+                    etl.src,
+                    combined_path,
+                    include_sitegroup=not etl.should_generate_so_sitegroup,
+                )
+                paths.append(str(combined_path))
+            self.stage1_status.config(text=f"Processed source export complete. Created {len(paths)} file(s).")
             messagebox.showinfo("Export complete", "Processed src files saved:\n" + "\n".join(paths))
         except Exception as error:
             messagebox.showerror("Export failed", f"{error}\n\n{traceback.format_exc(limit=2)}")

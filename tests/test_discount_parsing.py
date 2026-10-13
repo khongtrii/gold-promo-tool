@@ -263,6 +263,52 @@ class DiscountParsingTest(unittest.TestCase):
 
         self.assertEqual(result["GOLD CODE"].tolist(), ["99999999"])
 
+    def test_exception_gold_codes_reject_all_carton_discount_variants(self):
+        values = [
+            "10T+2T",
+            "10TH+2TH",
+            "10T+2TH",
+            "10th + 2t",
+            "10+2",
+            "10",
+            "10%",
+            "10TH+2TH",
+        ]
+        etl = Template_ETL([], exception_discount_gold_codes={"02043862", "CUSTOM01"})
+        etl.src = pd.DataFrame(
+            {
+                "GOLD CODE": ["02043862"] * 7 + ["99999999"],
+                "DISCOUNT (% OR VALUE)": values,
+                "NOTE ERR FROM MASTER DATA": [""] * len(values),
+            }
+        )
+
+        etl._validate_exception_carton_discounts()
+
+        notes = etl.src["NOTE ERR FROM MASTER DATA"]
+        self.assertTrue(notes.iloc[:4].eq(etl.EXCEPTION_CARTON_DISCOUNT_ERROR).all())
+        self.assertTrue(notes.iloc[4:].eq("").all())
+
+    def test_exception_carton_validation_tracks_the_current_exception_list(self):
+        etl = Template_ETL([], exception_discount_gold_codes={"CUSTOM01"})
+        etl.src = pd.DataFrame(
+            {
+                "GOLD CODE": ["CUSTOM01"],
+                "DISCOUNT (% OR VALUE)": ["10TH+2TH"],
+                "NOTE ERR FROM MASTER DATA": ["Existing error"],
+            }
+        )
+
+        etl._validate_exception_carton_discounts()
+        self.assertEqual(
+            etl.src.at[0, "NOTE ERR FROM MASTER DATA"],
+            "Existing error | " + etl.EXCEPTION_CARTON_DISCOUNT_ERROR,
+        )
+
+        etl.exception_discount_gold_codes = set()
+        etl._validate_exception_carton_discounts()
+        self.assertEqual(etl.src.at[0, "NOTE ERR FROM MASTER DATA"], "Existing error")
+
     def test_invalid_site_rule_skips_following_network_checks_for_its_group(self):
         etl = Template_ETL([])
         etl.dict_network = {"network": {}, "store": ["1001"]}
