@@ -71,6 +71,7 @@ class DiscountNetworkTest(unittest.TestCase):
         })
         expressions = ["8300", "801", "802", "8300+8200", "999", "8300-801"]
         data = pd.DataFrame({column: ["1"] * len(expressions) for column in required_wh_discount})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
         data["PURCHASE NETWORK"] = expressions
         data["PP START YEAR"] = "2099"
         data["PP END YEAR"] = "2099"
@@ -98,6 +99,7 @@ class DiscountNetworkTest(unittest.TestCase):
 
     def _load_wh_networks(self, expressions, wh_sites="801;802;809"):
         data = pd.DataFrame({column: ["1"] * len(expressions) for column in required_wh_discount})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
         data["PURCHASE NETWORK"] = expressions
         data["GOLD CODE"] = [str(index + 1) for index in range(len(expressions))]
         data["PP START YEAR"] = "2099"
@@ -164,6 +166,7 @@ class DiscountNetworkTest(unittest.TestCase):
     def test_stage3_rejects_plain_number_plus_number_discount(self):
         values = ["10+5", "10T+5TH", "10", "10%"]
         data = pd.DataFrame({column: ["1"] * len(values) for column in required_wh_discount})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
         data["DISCOUNT (% OR VALUE)"] = values
         data["PURCHASE NETWORK"] = "101"
         data["PP START YEAR"] = "2099"

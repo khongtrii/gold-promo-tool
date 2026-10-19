@@ -63,6 +63,49 @@ class WorkbookExporterTest(unittest.TestCase):
             finally:
                 result.close()
 
+    def test_source_shaped_exports_remove_rows_excluded_by_promo_type(self):
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
+            source = Path(directory) / "source.xlsx"
+            error_output = Path(directory) / "errors.xlsx"
+            processed_output = Path(directory) / "processed.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Template"
+            sheet.cell(7, 1, "GOLD CODE")
+            sheet.cell(7, 2, "MULTI")
+            sheet.cell(8, 1, "GOLD-1")
+            sheet.cell(9, 1, "OUT-1")
+            sheet.cell(10, 1, "GOLD-2")
+            workbook.save(source)
+            workbook.close()
+
+            kept = pd.DataFrame(
+                {
+                    "_SOURCE_ROW": [8, 10],
+                    "NOTE ERR FROM MASTER DATA": ["Validation error", ""],
+                    "STRUCTURE": ["110", "110"],
+                    "SO": ["SO1", "SO2"],
+                    "SITE GROUP": ["10001", "10002"],
+                }
+            )
+            WorkbookExporter.write_source_errors(
+                source,
+                kept.iloc[[0]],
+                error_output,
+                included_source_rows=kept["_SOURCE_ROW"],
+            )
+            WorkbookExporter.write_processed_source(source, kept, processed_output)
+
+            for path in (error_output, processed_output):
+                result = load_workbook(path)
+                try:
+                    result_sheet = result["Template"]
+                    self.assertEqual(result_sheet.cell(8, 1).value, "GOLD-1")
+                    self.assertEqual(result_sheet.cell(9, 1).value, "GOLD-2")
+                    self.assertIsNone(result_sheet.cell(10, 1).value)
+                finally:
+                    result.close()
+
     def test_combined_processed_source_excludes_internal_columns(self):
         with TemporaryDirectory(dir=Path.cwd()) as directory:
             output = Path(directory) / "ALL_PROCESSED.xlsx"

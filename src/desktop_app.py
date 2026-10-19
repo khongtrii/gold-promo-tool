@@ -101,6 +101,14 @@ class WorkbookExporter:
         cell.fill = copy(WorkbookExporter.NOTE_ERROR_FILL)
         cell.font = Font(color="FFFF0000", bold=bold)
 
+    @staticmethod
+    def _keep_source_rows(sheet, source_rows, *, first_data_row: int = 8) -> None:
+        """Remove source rows excluded by the GOLD PROMO TYPE filter."""
+        included = {int(row) for row in source_rows}
+        for row in range(sheet.max_row, first_data_row - 1, -1):
+            if row not in included:
+                sheet.delete_rows(row, 1)
+
     _excel = None
 
     @classmethod
@@ -180,6 +188,7 @@ class WorkbookExporter:
         errors: pd.DataFrame,
         output_path: Path,
         sheet_name: str = "Template",
+        included_source_rows=None,
     ) -> None:
         """Copy the source workbook and append notes at the original data rows.
 
@@ -215,6 +224,9 @@ class WorkbookExporter:
             if not pd.isna(note) and str(note).strip():
                 note_cell = source_sheet.cell(int(row["_SOURCE_ROW"]), note_column, str(note))
                 WorkbookExporter._style_note_error_cell(note_cell)
+
+        if included_source_rows is not None:
+            WorkbookExporter._keep_source_rows(source_sheet, included_source_rows)
 
         source_workbook.save(str(output_path))
         source_workbook.close()
@@ -297,6 +309,8 @@ class WorkbookExporter:
                 source_row = int(row["_SOURCE_ROW"])
                 for name, column in columns.items():
                     sheet.cell(source_row, column, WorkbookExporter._excel_value(row[name]))
+
+            WorkbookExporter._keep_source_rows(sheet, processed["_SOURCE_ROW"])
 
             workbook.save(output_path)
         finally:
@@ -599,9 +613,9 @@ class GoldPromoApp:
         self.stage1_frame = ttk.Frame(self.notebook, padding=12)
         self.stage2_frame = ttk.Frame(self.notebook, padding=12)
         self.stage3_frame = ttk.Frame(self.notebook, padding=12)
-        self.notebook.add(self.stage1_frame, text="Stage 1 — Purchase & Discount")
-        self.notebook.add(self.stage2_frame, text="Stage 2 — Sale Price")
-        self.notebook.add(self.stage3_frame, text="Stage 3 — WH DISCOUNT")
+        self.notebook.add(self.stage1_frame, text="Stage 1 - GOLD PROMO")
+        self.notebook.add(self.stage2_frame, text="Stage 2 - LIST OFF & ATTRIBUTE")
+        self.notebook.add(self.stage3_frame, text="Stage 3 - DISCOUNT WHs")
 
         self._build_stage1()
         self._build_stage2()
@@ -1251,6 +1265,13 @@ class GoldPromoApp:
                     structure_errors,
                     error_path,
                     (source_sheets or {}).get(source, "Template"),
+                    data.loc[
+                        data["FILE NAME"].eq(source.name)
+                        & data["STRUCTURE"].fillna("").astype(str).eq(
+                            "" if pd.isna(structure) else str(structure)
+                        ),
+                        "_SOURCE_ROW",
+                    ],
                 )
                 error_paths.append(str(error_path))
         messagebox.showerror("Validation errors", "Processing stopped. Error source returned:\n" + "\n".join(error_paths))
@@ -1321,6 +1342,10 @@ class GoldPromoApp:
                 check_attribute=self.stage1_check_attribute.get(),
             )
             etl._load_network()._load_src()
+            if etl.has_invalid_gold_promo_type:
+                self._return_errors(sources, etl.src, output, "stage1", timestamp)
+                self.stage1_status.config(text="Stopped: invalid GOLD PROMO TYPE values were returned.")
+                return
             if self._export_deleted_attributes(etl, output, timestamp):
                 return
             self._load_discount_exceptions(etl)
@@ -1428,6 +1453,10 @@ class GoldPromoApp:
                 master_data = master_paths[0]
                 direct_etl = Template_ETL(sources, master_data, master_data)
                 direct_etl._load_network()._load_src(validate_source=False)
+                if direct_etl.has_invalid_gold_promo_type:
+                    self._return_errors(sources, direct_etl.src, output, "stage1", timestamp)
+                    self.stage1_status.config(text="Stopped: invalid GOLD PROMO TYPE values were returned.")
+                    return
                 if not direct_etl.has_complete_so():
                     messagebox.showerror(
                         "Complete SO required",
@@ -1748,6 +1777,10 @@ class GoldPromoApp:
                     check_attribute=self.stage1_check_attribute.get(),
                 )
                 etl._load_network()._load_src()
+                if etl.has_invalid_gold_promo_type:
+                    self._return_errors(sources, etl.src, output, "stage1", timestamp)
+                    self.stage1_status.config(text="Stopped: invalid GOLD PROMO TYPE values were returned.")
+                    return
                 if self._export_deleted_attributes(etl, output, timestamp):
                     return
                 self._load_discount_exceptions(etl)
@@ -2047,6 +2080,17 @@ class GoldPromoApp:
             self.root.update_idletasks()
             etl = Template_ETL(sources, master_data, master_data)
             etl._load_network()._load_src_wh_discount()
+            if etl.has_invalid_gold_promo_type:
+                self._return_errors(sources, etl.src, output, "wh_discount", timestamp)
+                self.stage3_status.config(text="Stopped: invalid GOLD PROMO TYPE values were returned.")
+                return
+            if etl.src.empty:
+                self.stage3_status.config(text="No GOLD PROMO rows remain after filtering.")
+                messagebox.showinfo(
+                    "WH Discount complete",
+                    "No GOLD PROMO rows remain after filtering GOLD PROMO TYPE.",
+                )
+                return
             self._load_discount_exceptions(etl)
             if self._return_errors(sources, etl.src, output, "wh_discount", timestamp):
                 self.stage3_status.config(text="Stopped: validation errors were returned to the output folder.")
@@ -2143,7 +2187,19 @@ class GoldPromoApp:
         if sources:
             try:
                 source_etl = Template_ETL(sources, master_data, master_data)
-                source_etl._load_src_listoff(source_sheets)._pipeline2()._load_network()
+                source_etl._load_src_listoff(source_sheets)
+                if source_etl.has_invalid_gold_promo_type:
+                    self._return_errors(
+                        sources,
+                        source_etl.src_listoff,
+                        output,
+                        "stage2",
+                        timestamp,
+                        source_sheets,
+                    )
+                    self.stage2_status.config(text="Stopped: invalid GOLD PROMO TYPE values were returned.")
+                    return
+                source_etl._load_plan()._pipeline2()._load_network()
                 if not self._return_errors(
                     sources,
                     source_etl.src_listoff,

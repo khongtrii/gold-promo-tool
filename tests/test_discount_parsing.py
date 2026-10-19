@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pandas as pd
 from openpyxl import Workbook
 
-from src.constant.required import required_cm
+from src.constant.required import required_cm, required_stage2
 from src.service.template_service import Template_ETL
 
 
@@ -15,6 +15,7 @@ class DiscountParsingTest(unittest.TestCase):
         for check_attribute in (False, True):
             with self.subTest(check_attribute=check_attribute):
                 data = pd.DataFrame({column: ["1"] * 5 for column in required_cm})
+                data["GOLD PROMO TYPE"] = "GOLD PROMO"
                 data["ATTRIBUTE MARKETING"] = ["delete hero", "please DELETE", "unknown", "", "Hero"]
                 data["PURCHASE VAT"] = "10%"
                 data["GOLD CODE"] = ["GC1", "GC2", "GC3", "GC4", "GC5"]
@@ -425,6 +426,91 @@ class DiscountParsingTest(unittest.TestCase):
         self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[2, "NOTE ERR FROM MASTER DATA"])
         self.assertIn("PROMOTION SALE PRICE phải là số nguyên", result.at[3, "NOTE ERR FROM MASTER DATA"])
 
+    def test_gold_promo_type_filters_out_of_promo_and_retains_invalid_rows(self):
+        data = pd.DataFrame(
+            {
+                "GOLD PROMO TYPE": [
+                    "GOLD PROMO",
+                    "OUT OF GOLD PROMO",
+                    " GOLD PROMO ",
+                    "gold promo",
+                    "INVALID",
+                    "",
+                ]
+            }
+        )
+        etl = Template_ETL([])
+
+        result = etl._filter_gold_promo_rows(data)
+
+        self.assertEqual(result.index.tolist(), [0, 2, 3, 4, 5])
+        self.assertEqual(result.loc[[0, 2], "GOLD PROMO TYPE"].tolist(), ["GOLD PROMO"] * 2)
+        self.assertTrue(etl.has_invalid_gold_promo_type)
+        for index in (3, 4, 5):
+            self.assertIn(
+                "GOLD PROMO TYPE chỉ được phép",
+                result.at[index, "NOTE ERR FROM MASTER DATA"],
+            )
+
+    def test_stage2_sp_dates_come_from_source_and_match_plan_dates(self):
+        data = pd.DataFrame({column: ["1", "1", "1"] for column in required_stage2})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        data["PRICELIST"] = ["20300001", "20100001", "20300002"]
+        data["SP START DAY"] = ["2", "3", "4"]
+        data["SP START MONTH"] = "10"
+        data["SP START YEAR"] = "2099"
+        data["SP END DAY"] = ["10", "11", "12"]
+        data["SP END MONTH"] = "10"
+        data["SP END YEAR"] = "2099"
+        data["NOTE ERR FROM MASTER DATA"] = ""
+        data["FILE NAME"] = "source.xlsx"
+        data["_SOURCE_ROW"] = [8, 9, 10]
+        data["STRUCTURE"] = "110"
+        etl = Template_ETL([])
+        etl.cata = "C01"
+        etl.src_listoff = data
+        etl.plan = pd.DataFrame(
+            {
+                "CATALOGUE START DATE": [pd.Timestamp("2099-10-02")],
+                "CATALOGUE END DATE": [pd.Timestamp("2099-10-10")],
+            }
+        )
+
+        etl._pipeline2()
+
+        self.assertEqual(etl.src_listoff.at[0, "SP START DATE"], pd.Timestamp("2099-10-02"))
+        self.assertEqual(etl.src_listoff.at[0, "SP END DATE"], pd.Timestamp("2099-10-10"))
+        self.assertEqual(etl.src_listoff.at[0, "NOTE ERR FROM MASTER DATA"], "")
+        self.assertNotIn("CATALOGUE START DATE", etl.src_listoff.at[1, "NOTE ERR FROM MASTER DATA"])
+        self.assertNotIn("CATALOGUE END DATE", etl.src_listoff.at[1, "NOTE ERR FROM MASTER DATA"])
+        self.assertIn("CATALOGUE START DATE", etl.src_listoff.at[2, "NOTE ERR FROM MASTER DATA"])
+        self.assertIn("CATALOGUE END DATE", etl.src_listoff.at[2, "NOTE ERR FROM MASTER DATA"])
+
+    def test_stage2_loads_sp_period_from_source_instead_of_catalogue_metadata(self):
+        data = pd.DataFrame({column: ["1"] for column in required_stage2})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        data["SALE VAT"] = "10%"
+        data["PROMOTION SALE PRICE"] = "100"
+        data["PRICELIST"] = "20100001"
+        data["SP START DAY"] = "2"
+        data["SP START MONTH"] = "10"
+        data["SP START YEAR"] = "2099"
+        data["SP END DAY"] = "10"
+        data["SP END MONTH"] = "10"
+        data["SP END YEAR"] = "2099"
+        etl = Template_ETL([Path("source.xlsx")])
+        etl.dept = {"source.xlsx": "110"}
+
+        with patch.object(etl, "_load_source_metadata", return_value={}), patch(
+            "src.service.template_service.pd.read_excel", return_value=data
+        ):
+            etl._load_src_listoff()
+
+        self.assertEqual(
+            etl.src_listoff.loc[0, list(etl.SP_PERIOD_COLUMNS)].tolist(),
+            ["2", "10", "2099", "10", "10", "2099"],
+        )
+
     def test_validate_requires_valid_purchase_vat_with_or_without_attribute_check(self):
         invalid_values = ["", "   ", None, float("nan"), "7%", "10", "invalid", "0.07", "inf", "NaN"]
         valid_values = [
@@ -446,6 +532,7 @@ class DiscountParsingTest(unittest.TestCase):
         for check_attribute in (False, True):
             with self.subTest(check_attribute=check_attribute):
                 data = pd.DataFrame({column: ["1"] * len(values) for column in required_cm})
+                data["GOLD PROMO TYPE"] = "GOLD PROMO"
                 data["ATTRIBUTE MARKETING"] = "Hero"
                 data["PURCHASE VAT"] = values
                 etl = Template_ETL([Path("source.xlsx")], check_attribute=check_attribute)
@@ -471,6 +558,7 @@ class DiscountParsingTest(unittest.TestCase):
         for check_attribute in (False, True):
             with self.subTest(check_attribute=check_attribute):
                 data = pd.DataFrame({column: ["1"] * 3 for column in required_cm})
+                data["GOLD PROMO TYPE"] = "GOLD PROMO"
                 data["ATTRIBUTE MARKETING"] = labels
                 data["PURCHASE VAT"] = "10%"
                 data["FREE PRODUCT"] = ["", None, float("nan")]
@@ -495,6 +583,7 @@ class DiscountParsingTest(unittest.TestCase):
         for check_attribute in (False, True):
             with self.subTest(check_attribute=check_attribute):
                 data = pd.DataFrame({column: ["1"] * len(discounts) for column in required_cm})
+                data["GOLD PROMO TYPE"] = "GOLD PROMO"
                 data["ATTRIBUTE MARKETING"] = "Hero"
                 data["PURCHASE VAT"] = "10%"
                 data["FREE PRODUCT"] = ["", None, float("nan"), "  ", "", "", None, "", "  ", "Gift"]

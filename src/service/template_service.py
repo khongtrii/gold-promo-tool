@@ -26,6 +26,17 @@ from src.constant.required import (
 
 class Template_ETL:
     GROUP_COLS: List[str] = ["FILE NAME", "GOLD CODE", "LV", "LU"]
+    GOLD_PROMO_TYPE_ERROR = (
+        "GOLD PROMO TYPE chỉ được phép là GOLD PROMO hoặc OUT OF GOLD PROMO."
+    )
+    SP_PERIOD_COLUMNS = (
+        "SP START DAY",
+        "SP START MONTH",
+        "SP START YEAR",
+        "SP END DAY",
+        "SP END MONTH",
+        "SP END YEAR",
+    )
     DISCOUNT_NUMBER = r"\d+(?:[.,]\d+)?"
     VALID_DISCOUNT = re.compile(
         rf"^(?:{DISCOUNT_NUMBER}|{DISCOUNT_NUMBER}%|"
@@ -147,6 +158,7 @@ class Template_ETL:
         self.cata_period: str = str()
         self.should_generate_so_sitegroup = True
         self.should_generate_so = True
+        self.has_invalid_gold_promo_type = False
 
     @staticmethod
     def _department_code(value) -> str:
@@ -279,6 +291,24 @@ class Template_ETL:
             data["NOTE ERR FROM MASTER DATA"] = ""
         data["NOTE ERR FROM MASTER DATA"] = data["NOTE ERR FROM MASTER DATA"].fillna("")
         return data
+
+    def _filter_gold_promo_rows(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Validate GOLD PROMO TYPE and remove valid out-of-promo rows.
+
+        Invalid rows are retained so the desktop workflow can return them to
+        the user with a row-level validation note before stopping the run.
+        """
+        self._ensure_note_err(data)
+        values = data["GOLD PROMO TYPE"].fillna("").astype(str).str.strip()
+        allowed = values.isin({"GOLD PROMO", "OUT OF GOLD PROMO"})
+        self._append_note_err(
+            data,
+            data.index[~allowed],
+            self.GOLD_PROMO_TYPE_ERROR,
+        )
+        data.loc[allowed, "GOLD PROMO TYPE"] = values.loc[allowed]
+        self.has_invalid_gold_promo_type |= bool((~allowed).any())
+        return data.loc[values.eq("GOLD PROMO") | ~allowed].copy()
 
     @staticmethod
     def _append_note_err(data: pd.DataFrame, idx: None, message: str) -> None:
@@ -646,6 +676,16 @@ class Template_ETL:
                 if col not in data.columns:
                     data[col] = ""
             self._check_required_columns(data, required_cm)
+            data = self._filter_gold_promo_rows(data)
+            file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
+                self.GOLD_PROMO_TYPE_ERROR, regex=False
+            ).any()
+            if file_has_invalid_type:
+                data["FILE NAME"] = path.name
+                data["_SOURCE_ROW"] = data.index + 8
+                data["STRUCTURE"] = self.dept[path.name]
+                sources.append(data)
+                continue
             if validate_source:
                 delete_mask = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.contains(
                     "delete", case=False, na=False
@@ -818,6 +858,16 @@ class Template_ETL:
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_wh_discount)
+            data = self._filter_gold_promo_rows(data)
+            file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
+                self.GOLD_PROMO_TYPE_ERROR, regex=False
+            ).any()
+            if file_has_invalid_type:
+                data["STRUCTURE"] = self.dept[path.name]
+                data["FILE NAME"] = path.name
+                data["_SOURCE_ROW"] = data.index + 8
+                sources.append(data)
+                continue
             data = self._default_blank_discounts(data)
             self._check_required_data(data, required_wh_discount)
             # Temporarily disabled to avoid reopening and scanning every source
@@ -951,14 +1001,15 @@ class Template_ETL:
         self,
         sheet_names: dict[Path, str] | None = None,
     ) -> "Template_ETL":
-        metadata = self._load_source_metadata(sheet_names)
+        self._load_source_metadata(sheet_names)
         sources = []
-        period_columns = ['SP START DAY', 'SP START MONTH', 'SP START YEAR', 'SP END DAY', 'SP END MONTH', 'SP END YEAR']
         required = [
+            "GOLD PROMO TYPE",
             "GOLD CODE",
             "SV",
             "PRICELIST",
             "SALE VAT",
+            *self.SP_PERIOD_COLUMNS,
         ]
         for path in self.path_src:
             data = pd.read_excel(
@@ -967,16 +1018,21 @@ class Template_ETL:
                 dtype=str,
                 sheet_name=(sheet_names or {}).get(path, "Template"),
             )
-            sale_period = metadata[path]
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_stage2)
-            self._check_required_columns(sale_period, period_columns)
+            data = self._filter_gold_promo_rows(data)
+            file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
+                self.GOLD_PROMO_TYPE_ERROR, regex=False
+            ).any()
+            if file_has_invalid_type:
+                data["FILE NAME"] = path.name
+                data["_SOURCE_ROW"] = data.index + 8
+                data["STRUCTURE"] = self.dept[path.name]
+                sources.append(data)
+                continue
             self._check_required_data(data, required)
-            self._check_required_data(sale_period, period_columns)
             self._validate_stage2_sale_values(data)
-
-            data[period_columns] = sale_period.loc[sale_period.index[0], period_columns].values
     
             pricelist = data["PRICELIST"].fillna("").str.strip().str[:4]
     
@@ -2381,10 +2437,8 @@ class Template_ETL:
         data = self.src_listoff
 
         data = data[required_stage2 + [
-            'SP START DAY', 'SP START MONTH', 'SP START YEAR',
-            'SP END DAY', 'SP END MONTH', 'SP END YEAR',
             'NOTE ERR FROM MASTER DATA', 'FILE NAME', '_SOURCE_ROW', 'STRUCTURE',
-        ]]
+        ]].copy()
 
         def normalize_sep(text: str) -> str:
             return re.sub(r";+", ";", re.sub(r"[^A-Za-z0-9]+", ";", str(text))).strip(";")
@@ -2406,12 +2460,7 @@ class Template_ETL:
             data["SP START DATE"], data["SP END DATE"] = self._combine_date_columns(
                 data, "SP"
             )
-        
-            today = pd.Timestamp.today().normalize()
-        
-            mask = data["SP START DATE"].notna() & (data["SP START DATE"] <= today)
-            data.loc[mask, "SP START DATE"] = today + pd.Timedelta(days=1)
-        
+
             mask_err = (
                 data["SP START DATE"].notna()
                 & data["SP END DATE"].notna()
@@ -2427,6 +2476,34 @@ class Template_ETL:
             return data
         
         data = _convert_date_sp(data)
+        if self.plan is None or self.plan.empty:
+            raise ValueError(f"Không tìm thấy CATALOGUE {self.cata} trong Master data.")
+
+        catalogue_start = self.plan["CATALOGUE START DATE"].iloc[0]
+        catalogue_end = self.plan["CATALOGUE END DATE"].iloc[0]
+        catalogue_period_required = data["PRICELIST CODE"].eq("2030")
+        invalid_start = (
+            catalogue_period_required
+            & data["SP START DATE"].notna()
+            & data["SP START DATE"].ne(catalogue_start)
+        )
+        self._append_note_err(
+            data,
+            data.index[invalid_start],
+            "SP START DATE phải bằng CATALOGUE START DATE "
+            f"({catalogue_start.strftime('%d/%m/%Y')}).",
+        )
+        invalid_end = (
+            catalogue_period_required
+            & data["SP END DATE"].notna()
+            & data["SP END DATE"].ne(catalogue_end)
+        )
+        self._append_note_err(
+            data,
+            data.index[invalid_end],
+            "SP END DATE phải bằng CATALOGUE END DATE "
+            f"({catalogue_end.strftime('%d/%m/%Y')}).",
+        )
         
         self.src_listoff = data
         
