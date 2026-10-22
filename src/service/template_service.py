@@ -870,6 +870,16 @@ class Template_ETL:
                 continue
             data = self._default_blank_discounts(data)
             self._check_required_data(data, required_wh_discount)
+            # Stage 3 creates CONTRACT directly from this source data instead
+            # of passing through the Stage 1 pipeline. Normalize the base
+            # commercial contract here so ContractMixin appends a site to the
+            # same four-character value used by the other template flows.
+            data["COMMERCIAL CONTRACT"] = (
+                data["COMMERCIAL CONTRACT"]
+                .fillna("")
+                .astype(str)
+                .map(self._contract_checking)
+            )
             # Temporarily disabled to avoid reopening and scanning every source
             # workbook with openpyxl. Keep the helper available for later use.
             # self._restore_percentage_cells(data, path)

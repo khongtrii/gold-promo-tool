@@ -97,22 +97,45 @@ class DiscountNetworkTest(unittest.TestCase):
             etl._load_src_wh_discount()
         self.assertIn("không thuộc WH", etl.src.at[1, "NOTE ERR FROM MASTER DATA"])
 
-    def _load_wh_networks(self, expressions, wh_sites="801;802;809"):
+    def _load_wh_networks(
+        self, expressions, wh_sites="801;802;809", contracts=None
+    ):
         data = pd.DataFrame({column: ["1"] * len(expressions) for column in required_wh_discount})
         data["GOLD PROMO TYPE"] = "GOLD PROMO"
         data["PURCHASE NETWORK"] = expressions
+        if contracts is not None:
+            data["COMMERCIAL CONTRACT"] = contracts
         data["GOLD CODE"] = [str(index + 1) for index in range(len(expressions))]
         data["PP START YEAR"] = "2099"
         data["PP END YEAR"] = "2099"
         data["PP END DAY"] = "2"
         etl = Template_ETL([Path("source.xlsx")])
         etl.dept = {"source.xlsx": "110"}
-        etl.dict_network = {"DISCOUNT_NETWORK": {"8300": wh_sites}, "wh8": []}
+        wh = Template_ETL._parse_sites(wh_sites)
+        etl.dict_network = {
+            "DISCOUNT_NETWORK": {"8300": wh_sites},
+            "wh": wh,
+            "wh8": [site for site in wh if site.startswith("8")],
+        }
         with patch.object(etl, "_load_source_metadata"), patch(
             "src.service.template_service.pd.read_excel", return_value=data
         ):
             etl._load_src_wh_discount()
         return etl
+
+    def test_stage3_normalizes_contract_before_appending_warehouse_sites(self):
+        etl = self._load_wh_networks(
+            ["901;903"],
+            wh_sites="901;903",
+            contracts=["R0380"],
+        )
+
+        self.assertEqual(etl.src["COMMERCIAL CONTRACT"].tolist(), ["R038"])
+        discount = Discount(etl, ag_type="WH")._create_ag_raw()
+        self.assertEqual(
+            discount.template_ag_raw["CONTRACT"].tolist(),
+            ["R0380901", "R0380903"],
+        )
 
     def test_stage3_adds_839_after_expansion_and_passes_it_to_ag(self):
         expressions = ["802", "809", "802;809", "801", "8300", "8300(-839)"]
