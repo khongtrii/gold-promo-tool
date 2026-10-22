@@ -108,6 +108,72 @@ class DiscountParsingTest(unittest.TestCase):
             ],
         )
 
+    def test_pipeline_normalizes_contract_before_duplicate_validation(self):
+        etl = Template_ETL([])
+        etl.dict_network = {"wh": [], "store": []}
+        etl.dept = {"source.xlsx": "110"}
+        etl.should_generate_so = False
+        etl.src = pd.DataFrame(
+            {
+                "FILE NAME": ["source.xlsx", "source.xlsx"],
+                "STRUCTURE": ["110", "110"],
+                "GOLD CODE": ["GC1", "GC1"],
+                "LV": ["1", "1"],
+                "LU": ["1", "1"],
+                "SUPPLIER CODE": ["SUP1", "SUP1"],
+                "COMMERCIAL CONTRACT": ["R038", "R0380"],
+                "PURCHASE NETWORK": ["901", "901"],
+                "NORMAL PURCHASE PRICE": ["100", "100"],
+                "DISCOUNT (% OR VALUE)": ["10%", "10%"],
+            }
+        )
+
+        passthrough_methods = (
+            "_check_network",
+            "_ppNetwork_gpNetwork",
+            "_field_validator",
+            "_validate_structure_gold_lv",
+            "_check_allocation",
+            "_convert_date",
+            "_validate_pp_dates_against_plan",
+            "_validate_overlapping_price_or_discount",
+        )
+        patchers = [
+            patch.object(etl, name, side_effect=lambda data: data)
+            for name in passthrough_methods
+        ]
+        duplicate_result = {}
+
+        def validate_duplicates_then_stop(data):
+            duplicate_result["data"] = Template_ETL._validate_duplicate_purchase_information(
+                etl, data
+            )
+            raise RuntimeError("stop after duplicate validation")
+
+        patchers.append(
+            patch.object(
+                etl,
+                "_validate_duplicate_purchase_information",
+                side_effect=validate_duplicates_then_stop,
+            )
+        )
+        for patcher in patchers:
+            patcher.start()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "stop after duplicate validation"):
+                etl._pipeline()
+        finally:
+            for patcher in reversed(patchers):
+                patcher.stop()
+
+        result = duplicate_result["data"]
+        self.assertEqual(result["COMMERCIAL CONTRACT"].tolist(), ["R038", "R038"])
+        self.assertTrue(
+            result["NOTE ERR FROM MASTER DATA"].str.contains(
+                "Thông tin mua hàng và chiết khấu bị trùng", regex=False
+            ).all()
+        )
+
     def test_discount_difference_allows_only_type_1_or_2_with_type_3(self):
         allowed = [
             pd.Series(["10%", "10+2"]),

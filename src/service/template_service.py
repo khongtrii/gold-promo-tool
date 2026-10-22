@@ -2366,6 +2366,12 @@ class Template_ETL:
 
     def _pipeline(self) -> "Template_ETL":
         data = self.src
+        data["COMMERCIAL CONTRACT"] = (
+            data["COMMERCIAL CONTRACT"]
+            .fillna("")
+            .astype(str)
+            .map(self._contract_checking)
+        )
 
         data = self._check_network(data)
         data = self._ppNetwork_gpNetwork(data)
@@ -2384,7 +2390,6 @@ class Template_ETL:
         data = self._validate_pp_dates_against_plan(data)
 
         data = self._validate_duplicate_purchase_information(data)
-        data["COMMERCIAL CONTRACT"] = data["COMMERCIAL CONTRACT"].map(self._contract_checking)
         data = self._validate_overlapping_price_or_discount(data)
 
         site_columns = [
