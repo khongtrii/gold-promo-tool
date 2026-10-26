@@ -275,13 +275,13 @@ class DiscountParsingTest(unittest.TestCase):
                     Template_ETL.VALID_DISCOUNT.fullmatch(normalized)
                 )
 
-    def test_normalizes_comma_thousands_and_decimal_values(self):
+    def test_comma_values_remain_invalid(self):
         cases = {
-            "10,000": "10000",
-            "1,234,567": "1234567",
-            "1,000.50": "1000.50",
             "10.5": "10.5",
             "10,5": "10,5",
+            "10,000": "10,000",
+            "1,234,567": "1,234,567",
+            "1,000.50": "1,000.50",
             "1.000,50": "1.000,50",
         }
 
@@ -291,13 +291,12 @@ class DiscountParsingTest(unittest.TestCase):
                     Template_ETL._normalize_decimal_number(source), expected
                 )
 
-    def test_normalizes_numbers_inside_discount_syntax(self):
+    def test_discount_values_with_commas_remain_invalid(self):
         cases = {
-            "10,000": "10000",
-            "10,5%": "10.5%",
-            "10,000%": "10000%",
-            "1,000T + 2.5TH": "1000T+2.5TH",
-            "1,000 + 2.5": "1000+2.5",
+            "10": "10",
+            "10.5%": "10.5%",
+            "1000T + 2.5TH": "1000T+2.5TH",
+            "1000 + 2.5": "1000+2.5",
         }
 
         for source, expected in cases.items():
@@ -306,7 +305,15 @@ class DiscountParsingTest(unittest.TestCase):
                 self.assertEqual(normalized, expected)
                 self.assertIsNotNone(Template_ETL.VALID_DISCOUNT.fullmatch(normalized))
 
-        for value in ("10,5", "1,000T+2,5TH", "1,000+2,5"):
+        for value in (
+            "10,5",
+            "10,000",
+            "10,5%",
+            "10,000%",
+            "1,000T+2.5TH",
+            "1000T+2,5TH",
+            "1,000+2.5",
+        ):
             with self.subTest(invalid=value):
                 normalized = Template_ETL._normalize_discount_text(value)
                 self.assertIsNone(Template_ETL.VALID_DISCOUNT.fullmatch(normalized))

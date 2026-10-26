@@ -361,26 +361,11 @@ class Template_ETL:
 
     @staticmethod
     def _normalize_decimal_number(value) -> str:
-        """Normalize comma thousands while retaining dot decimals."""
+        """Remove whitespace while retaining dot decimals; commas stay invalid."""
         if pd.isna(value):
             return ""
 
         text = str(value).strip().replace("\u00a0", "").replace(" ", "")
-        comma_position = text.rfind(",")
-        dot_position = text.rfind(".")
-
-        if comma_position >= 0 and dot_position >= 0:
-            if comma_position < dot_position and re.fullmatch(
-                r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", text
-            ):
-                return text.replace(",", "")
-            return text
-
-        if comma_position >= 0:
-            if re.fullmatch(r"\d{1,3}(?:,\d{3})+", text):
-                return text.replace(",", "")
-            return text
-
         return text
 
     @classmethod
@@ -390,19 +375,9 @@ class Template_ETL:
             return ""
         text = re.sub(r"\s+", "", str(value))
 
-        def normalize_component(match: re.Match) -> str:
-            number = match.group(0)
-            is_percentage = text[match.end():].startswith("%")
-            if is_percentage and "," in number:
-                if re.fullmatch(r"\d{1,3}(?:,\d{3})+", number):
-                    return number.replace(",", "")
-                if "." not in number and number.count(",") == 1:
-                    return number.replace(",", ".")
-            return cls._normalize_decimal_number(number)
-
         return re.sub(
             r"\d+(?:[.,]\d+)*",
-            normalize_component,
+            lambda match: cls._normalize_decimal_number(match.group(0)),
             text,
         )
 
