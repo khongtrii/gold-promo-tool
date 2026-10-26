@@ -73,7 +73,7 @@ class WorkbookExporterTest(unittest.TestCase):
             sheet.title = "Template"
             sheet.cell(7, 1, "GOLD CODE")
             sheet.cell(7, 2, "MULTI")
-            sheet.cell(8, 1, "GOLD-1")
+            sheet.cell(8, 1, "  GOLD-1  ")
             sheet.cell(9, 1, "OUT-1")
             sheet.cell(10, 1, "GOLD-2")
             workbook.save(source)
@@ -113,9 +113,9 @@ class WorkbookExporterTest(unittest.TestCase):
                 {
                     "NO": [1, 2],
                     "STRUCTURE": [110, 120],
-                    "GOLD CODE": ["A", "B"],
+                    "GOLD CODE": ["  A ", "B  "],
                     "NOTE ERR FROM MASTER DATA": ["", ""],
-                    "FILE NAME": ["a.xlsx", "b.xlsx"],
+                    "FILE NAME": [" a.xlsx ", "b.xlsx  "],
                     "_SOURCE_ROW": [8, 8],
                     "SITE GROUP": ["10001", "10002"],
                     "SO": ["SO1", "SO2"],
@@ -135,8 +135,12 @@ class WorkbookExporterTest(unittest.TestCase):
                 ["NO", "STRUCTURE", "GOLD CODE", "SITE GROUP", "SO", "FILE NAME"],
             )
             self.assertEqual(result["FILE NAME"].tolist(), ["a.xlsx", "b.xlsx"])
+            self.assertEqual(result["GOLD CODE"].tolist(), ["A", "B"])
             self.assertEqual(result["SO"].tolist(), ["SO1", "SO2"])
             self.assertEqual(len(result), 2)
+
+    def test_excel_value_strips_only_surrounding_whitespace(self):
+        self.assertEqual(WorkbookExporter._excel_value("  A  B  "), "A  B")
 
     def test_combined_processed_source_omits_sitegroup_before_add_sitegroup(self):
         with TemporaryDirectory(dir=Path.cwd()) as directory:

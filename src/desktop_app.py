@@ -109,6 +109,25 @@ class WorkbookExporter:
             if row not in included:
                 sheet.delete_rows(row, 1)
 
+    @staticmethod
+    def _strip_worksheet_text(sheet, *, first_data_row: int) -> None:
+        """Trim surrounding whitespace from text cells before saving output."""
+        for row in sheet.iter_rows(
+            min_row=first_data_row,
+            max_row=sheet.max_row,
+            max_col=sheet.max_column,
+        ):
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.value = cell.value.strip()
+
+    @staticmethod
+    def strip_dataframe_text(data: pd.DataFrame) -> pd.DataFrame:
+        """Return a copy with surrounding whitespace removed from text values."""
+        return data.map(
+            lambda value: value.strip() if isinstance(value, str) else value
+        )
+
     _excel = None
 
     @classmethod
@@ -180,7 +199,7 @@ class WorkbookExporter:
             return ""
         if WorkbookExporter._is_date_value(value):
             return pd.Timestamp(value).strftime("%d/%m/%Y")
-        return str(value)
+        return str(value).strip()
 
     @staticmethod
     def write_source_errors(
@@ -227,6 +246,8 @@ class WorkbookExporter:
 
         if included_source_rows is not None:
             WorkbookExporter._keep_source_rows(source_sheet, included_source_rows)
+
+        WorkbookExporter._strip_worksheet_text(source_sheet, first_data_row=8)
 
         source_workbook.save(str(output_path))
         source_workbook.close()
@@ -311,6 +332,9 @@ class WorkbookExporter:
                     sheet.cell(source_row, column, WorkbookExporter._excel_value(row[name]))
 
             WorkbookExporter._keep_source_rows(sheet, processed["_SOURCE_ROW"])
+            WorkbookExporter._strip_worksheet_text(
+                sheet, first_data_row=header_row + 1
+            )
 
             workbook.save(output_path)
         finally:
@@ -339,6 +363,7 @@ class WorkbookExporter:
             if column not in excluded and column not in workflow_columns
         ]
         combined = processed.loc[:, [*source_columns, *workflow_columns]].copy()
+        combined = WorkbookExporter.strip_dataframe_text(combined)
         combined.to_excel(output_path, sheet_name="Processed", index=False)
 
     @staticmethod
@@ -373,6 +398,10 @@ class WorkbookExporter:
                     str(row["NOTE ERR FROM MASTER DATA"]),
                 )
                 WorkbookExporter._style_note_error_cell(note_cell)
+
+            WorkbookExporter._strip_worksheet_text(
+                sheet, first_data_row=header_row + 1
+            )
 
             workbook.save(output_path)
         finally:
@@ -522,7 +551,10 @@ class SiteGroupReview:
         ]
         rows = [self.tree.item(item, "values") for item in self.tree.get_children()]
         try:
-            pd.DataFrame(rows, columns=columns).to_excel(path, index=False, sheet_name="Site Group Review")
+            review = WorkbookExporter.strip_dataframe_text(
+                pd.DataFrame(rows, columns=columns)
+            )
+            review.to_excel(path, index=False, sheet_name="Site Group Review")
             messagebox.showinfo("Site Group review saved", f"Saved review file:\n{path}", parent=self.window)
         except Exception as error:
             messagebox.showerror("Save failed", f"Cannot save the review file:\n{error}", parent=self.window)
@@ -1309,7 +1341,12 @@ class GoldPromoApp:
         for (structure, file_name), source_data in data.groupby(["STRUCTURE", "FILE NAME"], sort=False, dropna=False):
             destination = GoldPromoApp._group_output_dir(output, structure, file_name)
             path = destination / f"{Path(str(file_name)).stem}_NON_WAREHOUSE_{timestamp}.xlsx"
-            source_data.drop(columns=["_SOURCE_ROW"], errors="ignore").to_excel(path, index=False)
+            export_data = source_data.drop(
+                columns=["_SOURCE_ROW"], errors="ignore"
+            )
+            WorkbookExporter.strip_dataframe_text(export_data).to_excel(
+                path, index=False
+            )
             paths.append(path)
         return paths
 
@@ -1321,7 +1358,9 @@ class GoldPromoApp:
         file_name = str(etl.src["FILE NAME"].iat[0])
         path = output / f"{Path(file_name).stem}_SO_GP_REPORT_{timestamp}.xlsx"
         report = etl.build_gold_promo_network_report()
-        report.to_excel(path, index=False, sheet_name="SO SITE Report")
+        WorkbookExporter.strip_dataframe_text(report).to_excel(
+            path, index=False, sheet_name="SO SITE Report"
+        )
         return path
 
     def run_stage1(self) -> None:
