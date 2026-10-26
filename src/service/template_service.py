@@ -37,7 +37,7 @@ class Template_ETL:
         "SP END MONTH",
         "SP END YEAR",
     )
-    DISCOUNT_NUMBER = r"\d+(?:[.,]\d+)?"
+    DISCOUNT_NUMBER = r"\d+(?:\.\d+)?"
     VALID_DISCOUNT = re.compile(
         rf"^(?:{DISCOUNT_NUMBER}|{DISCOUNT_NUMBER}%|"
         rf"{DISCOUNT_NUMBER}(?:T|TH)\+{DISCOUNT_NUMBER}(?:T|TH)|"
@@ -361,7 +361,7 @@ class Template_ETL:
 
     @staticmethod
     def _normalize_decimal_number(value) -> str:
-        """Normalize decimal separators used by different regional formats."""
+        """Normalize comma thousands while retaining dot decimals."""
         if pd.isna(value):
             return ""
 
@@ -370,14 +370,41 @@ class Template_ETL:
         dot_position = text.rfind(".")
 
         if comma_position >= 0 and dot_position >= 0:
-            if comma_position > dot_position:
-                return text.replace(".", "").replace(",", ".")
-            return text.replace(",", "")
+            if comma_position < dot_position and re.fullmatch(
+                r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", text
+            ):
+                return text.replace(",", "")
+            return text
 
         if comma_position >= 0:
-            return text.replace(",", ".")
+            if re.fullmatch(r"\d{1,3}(?:,\d{3})+", text):
+                return text.replace(",", "")
+            return text
 
         return text
+
+    @classmethod
+    def _normalize_discount_text(cls, value) -> str:
+        """Normalize every numeric component while preserving discount syntax."""
+        if pd.isna(value):
+            return ""
+        text = re.sub(r"\s+", "", str(value))
+
+        def normalize_component(match: re.Match) -> str:
+            number = match.group(0)
+            is_percentage = text[match.end():].startswith("%")
+            if is_percentage and "," in number:
+                if re.fullmatch(r"\d{1,3}(?:,\d{3})+", number):
+                    return number.replace(",", "")
+                if "." not in number and number.count(",") == 1:
+                    return number.replace(",", ".")
+            return cls._normalize_decimal_number(number)
+
+        return re.sub(
+            r"\d+(?:[.,]\d+)*",
+            normalize_component,
+            text,
+        )
 
     def _unique_sorted_sites(self, value) -> tuple:
         return tuple(sorted(set(self._parse_sites(value)), key=self._sort_key))
@@ -675,6 +702,7 @@ class Template_ETL:
             for col in ["NOTE ERR FROM MASTER DATA", "SITE GROUP", "SO", "STRUCTURE"]:
                 if col not in data.columns:
                     data[col] = ""
+            self._restore_percentage_cells(data, path)
             self._check_required_columns(data, required_cm)
             data = self._filter_gold_promo_rows(data)
             file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
@@ -714,9 +742,6 @@ class Template_ETL:
                 ]
             if validate_source:
                 self._check_required_data(data, required_source_data)
-            # Temporarily disabled to avoid reopening and scanning every source
-            # workbook with openpyxl. Keep the helper available for later use.
-            # self._restore_percentage_cells(data, path)
             if not validate_source:
                 data.columns = [str(col).replace("-RECOMMENDATION QUALITY", "") for col in data.columns]
                 data["FILE NAME"] = path.name
@@ -766,9 +791,7 @@ class Template_ETL:
 
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"]
-                .fillna("")
-                .astype(str)
-                .str.replace(r"\s+", "", regex=True)
+                .map(self._normalize_discount_text)
             )
             plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
             numeric_discount = pd.to_numeric(
@@ -831,18 +854,26 @@ class Template_ETL:
             "% DELIVERY 3",
         )
         target_columns = [column for column in percentage_columns if column in data.columns]
-        if not target_columns:
+        if not target_columns or not path.exists():
             return
         workbook = load_workbook(path, read_only=True, data_only=True)
         try:
             worksheet = workbook["Template"]
             headers = [cell.value for cell in next(worksheet.iter_rows(min_row=7, max_row=7))]
-            for column in target_columns:
-                if column not in headers:
+            source_columns = {
+                column: headers.index(column)
+                for column in target_columns
+                if column in headers
+            }
+            source_indices = set(data.index)
+            for excel_row, cells in enumerate(
+                worksheet.iter_rows(min_row=8), start=8
+            ):
+                dataframe_index = excel_row - 8
+                if dataframe_index not in source_indices:
                     continue
-                column_index = headers.index(column) + 1
-                for dataframe_index, excel_row in zip(data.index, range(8, len(data) + 8)):
-                    cell = worksheet.cell(excel_row, column_index)
+                for column, column_index in source_columns.items():
+                    cell = cells[column_index]
                     if "%" not in str(cell.number_format) or not isinstance(cell.value, (int, float)):
                         continue
                     data.at[dataframe_index, column] = f"{cell.value * 100:g}%"
@@ -857,6 +888,7 @@ class Template_ETL:
             data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
             data["NOTE ERR FROM MASTER DATA"] = ""
+            self._restore_percentage_cells(data, path)
             self._check_required_columns(data, required_wh_discount)
             data = self._filter_gold_promo_rows(data)
             file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
@@ -880,15 +912,9 @@ class Template_ETL:
                 .astype(str)
                 .map(self._contract_checking)
             )
-            # Temporarily disabled to avoid reopening and scanning every source
-            # workbook with openpyxl. Keep the helper available for later use.
-            # self._restore_percentage_cells(data, path)
-
             discount_text = (
                 data["DISCOUNT (% OR VALUE)"]
-                .fillna("")
-                .astype(str)
-                .str.replace(r"\s+", "", regex=True)
+                .map(self._normalize_discount_text)
             )
             plain_discount = ~discount_text.str.contains(r"[+%]", regex=True, na=False)
             numeric_discount = pd.to_numeric(
