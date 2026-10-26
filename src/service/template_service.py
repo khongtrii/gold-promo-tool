@@ -932,6 +932,20 @@ class Template_ETL:
             ))
             for index, expanded in data["DISCOUNT_NETWORK_EXPANDED"].items():
                 sites = set(self._parse_sites(expanded))
+                missing_subtracted_sites = self._missing_subtracted_sites(
+                    self._normalize_network_punctuation(
+                        data.at[index, "PURCHASE NETWORK"]
+                    ),
+                    network_key="DISCOUNT_NETWORK",
+                )
+                if missing_subtracted_sites:
+                    self._append_note_err(
+                        data,
+                        pd.Index([index]),
+                        "PURCHASE NETWORK có site trừ không thuộc network tổng: "
+                        + ";".join(missing_subtracted_sites)
+                        + ".",
+                    )
                 invalid_sites = sorted(sites - discount_wh, key=self._sort_key)
                 if not sites:
                     self._append_note_err(
@@ -1459,6 +1473,43 @@ class Template_ETL:
 
         return True
 
+    def _missing_subtracted_sites(
+        self,
+        expression,
+        network_key: str = "network",
+    ) -> list[str]:
+        """Return literal sites subtracted outside the expression's positive network."""
+        if pd.isna(expression) or expression is None:
+            return []
+
+        expression = str(expression).strip().replace(" ", "")
+        if not expression or not self._has_valid_network_rule(expression):
+            return []
+
+        subtraction_pattern = re.compile(
+            r"-(?:\(([^)]+)\)|([A-Za-z0-9]+(?:;[A-Za-z0-9]+)*))"
+        )
+        subtraction_matches = list(subtraction_pattern.finditer(expression))
+        if not subtraction_matches:
+            return []
+
+        network = self.dict_network.get(network_key, {})
+        positive_expression = subtraction_pattern.sub("", expression)
+        positive_sites = set()
+        for token in re.findall(r"[A-Za-z0-9]+", positive_expression):
+            positive_sites.update(self._expand(token, network))
+
+        missing = set()
+        for match in subtraction_matches:
+            for token in (match.group(1) or match.group(2) or "").split(";"):
+                token = token.strip()
+                # Only literal sites are checked here. Subtracting a configured
+                # network remains governed by the existing expansion rules.
+                if token and token not in network and token not in positive_sites:
+                    missing.add(token)
+
+        return sorted(missing, key=self._sort_key)
+
     def _check_network(self, data) -> Optional[pd.DataFrame]:
         data = self._ensure_note_err(data)
         # This marker prevents dependent validation from treating a blocked
@@ -1532,6 +1583,21 @@ class Template_ETL:
                 if empty_after_expand.any():
                     messages.append(
                         f"{source_column} sau khi expand +/- bị rỗng, vui lòng kiểm tra lại."
+                    )
+
+                missing_subtracted_sites = set()
+                for expression in rows[source_column]:
+                    missing_subtracted_sites.update(
+                        self._missing_subtracted_sites(expression)
+                    )
+                if missing_subtracted_sites:
+                    missing_sorted = sorted(
+                        missing_subtracted_sites, key=self._sort_key
+                    )
+                    messages.append(
+                        f"{source_column} có site trừ không thuộc network tổng: "
+                        + ";".join(missing_sorted)
+                        + "."
                     )
 
             invalid_sites = set()
@@ -1985,6 +2051,17 @@ class Template_ETL:
 
         return data
 
+    def _validate_so_length(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Append an error when a generated or retained SO exceeds 10 characters."""
+        self._ensure_note_err(data)
+        so_values = data["SO"].fillna("").astype(str).str.strip()
+        self._append_note_err(
+            data,
+            data.index[so_values.str.len().gt(10)],
+            "SO chỉ được tối đa 10 ký tự.",
+        )
+        return data
+
     def build_gold_promo_network_report(self) -> pd.DataFrame:
         """Summarize unique articles and resulting OA rows for every SO.
 
@@ -2383,6 +2460,7 @@ class Template_ETL:
             # the separate Add Site Group action in the desktop workflow.
             data["STRUCTURE"] = source_structure
             data = self._getSO(data)
+        data = self._validate_so_length(data)
         data = self._field_validator(data)
         data = self._validate_structure_gold_lv(data)
         data = self._check_allocation(data)

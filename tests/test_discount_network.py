@@ -143,7 +143,12 @@ class DiscountNetworkTest(unittest.TestCase):
         expected = ["802;839", "809;839", "802;809;839", "801",
                     "801;802;809;839", "801;802;809;839"]
         self.assertEqual(etl.src["DISCOUNT_NETWORK_EXPANDED"].tolist(), expected)
-        self.assertEqual(etl.src["NOTE ERR FROM MASTER DATA"].tolist(), [""] * len(expressions))
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].tolist()
+        self.assertEqual(notes[:5], [""] * 5)
+        self.assertIn(
+            "PURCHASE NETWORK có site trừ không thuộc network tổng: 839.",
+            notes[5],
+        )
         for column in ("PURCHASE NETWORK", "PURCHASE NETWORK EXPANDED"):
             self.assertEqual(etl.src[column].tolist(), expressions)
         discount = Discount(etl, ag_type="WH")._create_ag_raw()._create_ag()
@@ -177,6 +182,21 @@ class DiscountNetworkTest(unittest.TestCase):
         ):
             etl._load_src_wh_discount()
         self.assertIn("Site 839 không thuộc WH", etl.src.at[0, "NOTE ERR FROM MASTER DATA"])
+
+    def test_stage3_reports_subtracted_site_outside_discount_network(self):
+        etl = self._load_wh_networks(
+            ["8300-999", "8300-801"],
+            wh_sites="801;802",
+        )
+
+        self.assertIn(
+            "PURCHASE NETWORK có site trừ không thuộc network tổng: 999.",
+            etl.src.at[0, "NOTE ERR FROM MASTER DATA"],
+        )
+        self.assertNotIn(
+            "site trừ không thuộc network tổng",
+            etl.src.at[1, "NOTE ERR FROM MASTER DATA"],
+        )
 
     def test_stage1_network_check_does_not_add_839(self):
         data = pd.DataFrame({

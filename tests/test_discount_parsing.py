@@ -117,6 +117,7 @@ class DiscountParsingTest(unittest.TestCase):
             {
                 "FILE NAME": ["source.xlsx", "source.xlsx"],
                 "STRUCTURE": ["110", "110"],
+                "SO": ["", ""],
                 "GOLD CODE": ["GC1", "GC1"],
                 "LV": ["1", "1"],
                 "LU": ["1", "1"],
@@ -398,6 +399,58 @@ class DiscountParsingTest(unittest.TestCase):
         self.assertNotIn("Cửa hàng", note)
         self.assertNotIn("Thiếu cửa hàng", note)
         self.assertNotIn("Dư cửa hàng", note)
+
+    def test_subtracted_literal_sites_must_belong_to_the_positive_network(self):
+        etl = Template_ETL([])
+        etl.dict_network = {
+            "network": {"8200": "101;102;103", "8210": "101;102"},
+            "store_hyper": ["101", "102", "103"],
+            "store": ["101", "102", "103"],
+        }
+        data = pd.DataFrame(
+            {
+                "FILE NAME": ["source.xlsx", "source.xlsx"],
+                "GOLD CODE": ["GC1", "GC2"],
+                "LV": ["1", "1"],
+                "LU": ["1", "1"],
+                "PURCHASE NETWORK": ["8200(-101;148,806)", "8210-101"],
+                "GOLD PROMO NETWORK": ["8200-101", "8210-153"],
+            }
+        )
+
+        result = etl._check_network(data)
+
+        self.assertIn(
+            "PURCHASE NETWORK có site trừ không thuộc network tổng: 148;806.",
+            result.at[0, "NOTE ERR FROM MASTER DATA"],
+        )
+        self.assertNotIn(
+            "PURCHASE NETWORK có site trừ",
+            result.at[1, "NOTE ERR FROM MASTER DATA"],
+        )
+        self.assertIn(
+            "GOLD PROMO NETWORK có site trừ không thuộc network tổng: 153.",
+            result.at[1, "NOTE ERR FROM MASTER DATA"],
+        )
+
+    def test_so_longer_than_ten_characters_is_reported(self):
+        etl = Template_ETL([])
+        data = pd.DataFrame(
+            {
+                "SO": ["C01D410-01", "C001D410-01", "  C01D41-01  ", None],
+                "NOTE ERR FROM MASTER DATA": ["", "Existing error", "", ""],
+            }
+        )
+
+        result = etl._validate_so_length(data)
+
+        self.assertEqual(result.at[0, "NOTE ERR FROM MASTER DATA"], "")
+        self.assertEqual(
+            result.at[1, "NOTE ERR FROM MASTER DATA"],
+            "Existing error | SO chỉ được tối đa 10 ký tự.",
+        )
+        self.assertEqual(result.at[2, "NOTE ERR FROM MASTER DATA"], "")
+        self.assertEqual(result.at[3, "NOTE ERR FROM MASTER DATA"], "")
 
     def test_network_8000_skips_all_network_validation_for_its_group(self):
         etl = Template_ETL([])
