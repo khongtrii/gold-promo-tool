@@ -739,6 +739,30 @@ class DiscountParsingTest(unittest.TestCase):
                     ["HERO"] * 3 if check_attribute else labels,
                 )
 
+    def test_attribute_prefers_prefix_before_fallback_keyword(self):
+        labels = ["(CATA 1- HERO)", "Campaign HERO", "unknown"]
+        data = pd.DataFrame({column: ["1"] * len(labels) for column in required_cm})
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        data["ATTRIBUTE MARKETING"] = labels
+        data["PURCHASE VAT"] = "10%"
+        data["FREE PRODUCT"] = ""
+        data["DISCOUNT (% OR VALUE)"] = ""
+        etl = Template_ETL([Path("source.xlsx")], check_attribute=True)
+        etl.dept = {"source.xlsx": "110"}
+
+        with patch.object(etl, "_load_source_metadata"), patch(
+            "src.service.template_service.pd.read_excel", return_value=data
+        ):
+            etl._load_src()
+
+        self.assertEqual(
+            etl.src["ATTRIBUTE MARKETING"].tolist(),
+            ["CATA", "HERO", "unknown"],
+        )
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+        self.assertEqual(notes[:2], ["", ""])
+        self.assertIn(etl.ATTRIBUTE_MARKETING_ERROR, notes[2])
+
     def test_attribute_requires_free_product_only_when_source_discount_is_present(self):
         discounts = ["10%", "1000", "1+1", "0", "0%", "", None, float("nan"), "  ", "10%"]
         for check_attribute in (False, True):

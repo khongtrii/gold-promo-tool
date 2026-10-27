@@ -66,6 +66,12 @@ class AttributeMediumMappingTest(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(mapper.attribute_map(label), code)
 
+    def test_prefix_takes_priority_over_later_keyword(self):
+        mapper = AttributeMapMixin()
+        self.assertEqual(mapper.attribute_map("(CATA 1- HERO)"), 7)
+        self.assertEqual(mapper.attribute_map("Campaign HERO"), 4)
+        self.assertEqual(mapper.attribute_map("unknown"), "unknown")
+
     def test_delete_rows_are_split_from_add_attribute_template(self):
         etl = SimpleNamespace(
             src=pd.DataFrame(
@@ -339,6 +345,18 @@ class DiscountSupplementNetworkTest(unittest.TestCase):
             "8710": " ;201;; ", "8300": "839; ;839;",
         }
         self.assert_sites(["101", "201", "839"], ["101", "201", "839"])
+
+    def test_site_158_is_added_only_when_final_network_contains_155(self):
+        self.etl.src["DISCOUNT_NETWORK_EXPANDED"] = "101"
+        self.etl.dict_network["DISCOUNT_NETWORK"] = {
+            "8710": "155", "8300": "",
+        }
+        self.assert_sites(["101", "155", "158"], ["101", "155", "158"])
+
+        self.etl.dict_network["DISCOUNT_NETWORK"] = {
+            "8710": "157", "8300": "",
+        }
+        self.assert_sites(["101", "157"], ["101", "157"])
 
     def test_wh_ag_does_not_add_configured_supplements(self):
         discount = Discount(self.etl, ag_type="WH")._create_ag_raw()._create_ag()

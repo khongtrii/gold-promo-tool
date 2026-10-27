@@ -79,6 +79,13 @@ class Template_ETL:
         ),
         (re.compile(r"(?i)\b(comple(?:mentary)?|comple)\b"), "COMPLE"),
     )
+    ATTRIBUTE_PREFIX_RULES = (
+        (re.compile(r"(?i)^\s*\(?\s*HERO\b"), "HERO"),
+        (re.compile(r"(?i)^\s*\(?\s*STAR\b"), "STAR"),
+        (re.compile(r"(?i)^\s*\(?\s*MODEL\b"), "MODEL"),
+        (re.compile(r"(?i)^\s*\(?\s*CATA\b"), "CATA"),
+        (re.compile(r"(?i)^\s*\(?\s*COMPLE\b"), "COMPLE"),
+    )
     ATTRIBUTE_MARKETING_ERROR = "Vui lòng bổ sung prefix cho ATTRIBUTE đặc biệt"
     ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
@@ -727,7 +734,10 @@ class Template_ETL:
             if self.check_attribute:
                 converted_attribute = pd.Series(pd.NA, index=data.index, dtype="string")
                 attribute_text = data["ATTRIBUTE MARKETING"].fillna("").astype(str).str.strip()
-                for pattern, category in self.CATEGORY_RULES:
+                for pattern, category in (
+                    *self.ATTRIBUTE_PREFIX_RULES,
+                    *self.CATEGORY_RULES,
+                ):
                     matched = converted_attribute.isna() & attribute_text.map(
                         lambda text: bool(pattern.search(text))
                     )

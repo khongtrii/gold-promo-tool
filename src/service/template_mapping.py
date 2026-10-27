@@ -50,6 +50,14 @@ class StageMixin:
     """Các bước xử lý DataFrame dùng chung cho mọi template."""
 
     @staticmethod
+    def add_companion_site(sites):
+        """Add site 158 whenever the final network contains site 155."""
+        sites = list(sites)
+        if "155" in sites and "158" not in sites:
+            sites.append("158")
+        return sites
+
+    @staticmethod
     def reset_no(data):
         data = data.reset_index(drop=True)
         data.insert(0, "NO", range(1, len(data) + 1))
@@ -161,6 +169,14 @@ class AllocationMixin:
 class AttributeMapMixin:
     """Map MEDIUM (free text) to the upload category code."""
 
+    PREFIX_RULES: Optional[List] = [
+        (re.compile(r"(?i)^\s*\(?\s*HERO\b"), 4),
+        (re.compile(r"(?i)^\s*\(?\s*STAR\b"), 5),
+        (re.compile(r"(?i)^\s*\(?\s*MODEL\b"), 6),
+        (re.compile(r"(?i)^\s*\(?\s*CATA\b"), 7),
+        (re.compile(r"(?i)^\s*\(?\s*COMPLE\b"), 8),
+    ]
+
     CATEGORY_RULES: Optional[List] = [
         (re.compile(r"(?i)\b(front\s*page|back\s*page|unbeat|hero)\b"), 4),
         (re.compile(r"(?i)\b(?:star|buy\s*more\s*save\s*more)\b"), 5),
@@ -183,7 +199,7 @@ class AttributeMapMixin:
 
         text = str(text).strip()
 
-        for pattern, value in self.CATEGORY_RULES:
+        for pattern, value in [*self.PREFIX_RULES, *self.CATEGORY_RULES]:
             if pattern.search(text):
                 return value
 
@@ -463,6 +479,7 @@ class PurchaseMixin:
             .astype(str)
             .str.split(";")
             .map(lambda sites: sites + store_minigo + wh)
+            .map(self.add_companion_site)
         )
 
         template_purchase = template_purchase.explode("SITE")
@@ -841,6 +858,7 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             site_lists.loc[~mask_ok] = site_lists.loc[~mask_ok].map(
                 lambda sites: sites + store_minigo
             )
+        site_lists = site_lists.map(self.add_companion_site)
         template_ag_raw[column_ag[2]] = site_lists
 
         template_ag_raw = template_ag_raw.explode(column_ag[2])
