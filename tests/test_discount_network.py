@@ -97,6 +97,32 @@ class DiscountNetworkTest(unittest.TestCase):
             etl._load_src_wh_discount()
         self.assertIn("không thuộc WH", etl.src.at[1, "NOTE ERR FROM MASTER DATA"])
 
+    def test_stage3_accepts_legacy_source_without_promo_type(self):
+        path = Path("legacy.xlsx")
+        data = pd.DataFrame({column: ["1"] for column in required_wh_discount})
+        data = data.drop(columns=["GOLD PROMO TYPE"])
+        data["PURCHASE NETWORK"] = "801"
+        data["DISCOUNT (% OR VALUE)"] = "10%"
+        data["COMMERCIAL CONTRACT"] = "R0380"
+        data["PP START YEAR"] = "2099"
+        data["PP END YEAR"] = "2099"
+        data["PP END DAY"] = "2"
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+        etl.dict_network = {
+            "DISCOUNT_NETWORK": {"8300": "801"},
+            "wh": ["801"],
+            "wh8": ["801"],
+        }
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: pd.DataFrame()}
+        ), patch("src.service.template_service.pd.read_excel", return_value=data):
+            etl._load_src_wh_discount()
+
+        self.assertEqual(etl.src.at[0, "GOLD PROMO TYPE"], "GOLD PROMO")
+        self.assertEqual(etl.src.at[0, "DISCOUNT_NETWORK_EXPANDED"], "801")
+
     def _load_wh_networks(
         self, expressions, wh_sites="801;802;809", contracts=None
     ):

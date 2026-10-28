@@ -11,6 +11,19 @@ from src.service.template_service import Template_ETL
 
 
 class DiscountParsingTest(unittest.TestCase):
+    @staticmethod
+    def _legacy_source(data: pd.DataFrame) -> pd.DataFrame:
+        return data.drop(
+            columns=[
+                "GOLD PROMO TYPE",
+                "NOTE",
+                "NOTE 1",
+                "NORMAL SALES QTY",
+                *Template_ETL.SP_PERIOD_COLUMNS,
+            ],
+            errors="ignore",
+        )
+
     def test_validate_splits_delete_rows_with_or_without_attribute_check(self):
         for check_attribute in (False, True):
             with self.subTest(check_attribute=check_attribute):
@@ -671,6 +684,75 @@ class DiscountParsingTest(unittest.TestCase):
             etl.src_listoff.loc[0, list(etl.SP_PERIOD_COLUMNS)].tolist(),
             ["2", "10", "2099", "10", "10", "2099"],
         )
+
+    def test_stage1_accepts_mixed_legacy_and_current_sources(self):
+        old_path = Path("old.xlsx")
+        new_path = Path("new.xlsx")
+        current = pd.DataFrame({column: ["1"] for column in required_cm})
+        current["GOLD PROMO TYPE"] = "GOLD PROMO"
+        legacy = self._legacy_source(current)
+        metadata = {
+            old_path: pd.DataFrame(),
+            new_path: pd.DataFrame(),
+        }
+        etl = Template_ETL([old_path, new_path])
+        etl.dept = {old_path.name: "110", new_path.name: "120"}
+
+        with patch.object(etl, "_load_source_metadata", return_value=metadata), patch(
+            "src.service.template_service.pd.read_excel",
+            side_effect=[legacy, current],
+        ):
+            etl._load_src(validate_source=False)
+
+        self.assertEqual(etl.src["GOLD PROMO TYPE"].tolist(), ["GOLD PROMO"] * 2)
+        self.assertEqual(etl.src["FILE NAME"].tolist(), ["old.xlsx", "new.xlsx"])
+        for column in ("NOTE", "NOTE 1", "NORMAL SALES QTY", *etl.SP_PERIOD_COLUMNS):
+            self.assertIn(column, etl.src.columns)
+
+    def test_current_source_missing_only_promo_type_is_not_treated_as_legacy(self):
+        path = Path("source.xlsx")
+        malformed = pd.DataFrame({column: ["1"] for column in required_cm}).drop(
+            columns=["GOLD PROMO TYPE"]
+        )
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: pd.DataFrame()}
+        ), patch("src.service.template_service.pd.read_excel", return_value=malformed):
+            with self.assertRaisesRegex(ValueError, "GOLD PROMO TYPE"):
+                etl._load_src(validate_source=False)
+
+    def test_stage2_legacy_source_uses_sp_period_from_metadata(self):
+        path = Path("legacy.xlsx")
+        current = pd.DataFrame({column: ["1"] for column in required_stage2})
+        legacy = self._legacy_source(current)
+        legacy["SALE VAT"] = "10%"
+        legacy["PROMOTION SALE PRICE"] = "100"
+        legacy["PRICELIST"] = "20100001"
+        metadata = pd.DataFrame(
+            {
+                "SP START DAY": ["2"],
+                "SP START MONTH": ["10"],
+                "SP START YEAR": ["2099"],
+                "SP END DAY": ["10"],
+                "SP END MONTH": ["10"],
+                "SP END YEAR": ["2099"],
+            }
+        )
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: metadata}
+        ), patch("src.service.template_service.pd.read_excel", return_value=legacy):
+            etl._load_src_listoff()
+
+        self.assertEqual(
+            etl.src_listoff.loc[0, list(etl.SP_PERIOD_COLUMNS)].tolist(),
+            ["2", "10", "2099", "10", "10", "2099"],
+        )
+        self.assertEqual(etl.src_listoff.at[0, "GOLD PROMO TYPE"], "GOLD PROMO")
 
     def test_validate_requires_valid_purchase_vat_with_or_without_attribute_check(self):
         invalid_values = ["", "   ", None, float("nan"), "7%", "10", "invalid", "0.07", "inf", "NaN"]

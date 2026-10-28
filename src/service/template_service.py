@@ -37,6 +37,12 @@ class Template_ETL:
         "SP END MONTH",
         "SP END YEAR",
     )
+    LEGACY_SOURCE_MISSING_COLUMNS = (
+        "NOTE",
+        "NOTE 1",
+        "NORMAL SALES QTY",
+        *SP_PERIOD_COLUMNS,
+    )
     DISCOUNT_NUMBER = r"\d+(?:\.\d+)?"
     VALID_DISCOUNT = re.compile(
         rf"^(?:{DISCOUNT_NUMBER}|{DISCOUNT_NUMBER}%|"
@@ -245,6 +251,46 @@ class Template_ETL:
             for path, data in metadata.items()
         }
         return metadata
+
+    def _normalize_source_template(
+        self,
+        data: pd.DataFrame,
+        metadata: pd.DataFrame | None = None,
+        require_sp_period: bool = False,
+    ) -> pd.DataFrame:
+        """Normalize a pre-cf85e7a Source GP to the current internal schema.
+
+        A current template that merely lost ``GOLD PROMO TYPE`` must still
+        fail validation.  Therefore a source is considered legacy only when
+        all columns introduced by the new template are absent as a group.
+        """
+        if "GOLD PROMO TYPE" in data.columns:
+            return data
+
+        new_columns_present = any(
+            column in data.columns for column in self.LEGACY_SOURCE_MISSING_COLUMNS
+        )
+        if new_columns_present:
+            return data
+
+        data = data.copy()
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        for column in ("NOTE", "NOTE 1", "NORMAL SALES QTY"):
+            data[column] = ""
+
+        if require_sp_period:
+            if metadata is None:
+                raise ValueError("Source GP cũ không có metadata để lấy kỳ SP.")
+            self._check_required_columns(metadata, list(self.SP_PERIOD_COLUMNS))
+            self._check_required_data(metadata, list(self.SP_PERIOD_COLUMNS))
+
+        for column in self.SP_PERIOD_COLUMNS:
+            if metadata is not None and column in metadata.columns and not metadata.empty:
+                data[column] = metadata[column].iat[0]
+            else:
+                data[column] = ""
+
+        return data
 
     @staticmethod
     def _check_required_columns(
@@ -675,12 +721,13 @@ class Template_ETL:
         return self
         
     def _load_src(self, validate_source: bool = True) -> "Template_ETL":
-        self._load_source_metadata()
+        metadata = self._load_source_metadata()
         sources = []
         deleted_sources = []
         for path in self.path_src:
             data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
+            data = self._normalize_source_template(data, metadata.get(path))
             for col in ["NOTE ERR FROM MASTER DATA", "SITE GROUP", "SO", "STRUCTURE"]:
                 if col not in data.columns:
                     data[col] = ""
@@ -867,11 +914,12 @@ class Template_ETL:
 
     def _load_src_wh_discount(self) -> "Template_ETL":
         """Load only the fields needed by the standalone WH Discount flow."""
-        self._load_source_metadata()
+        metadata = self._load_source_metadata()
         sources = []
         for path in self.path_src:
             data = pd.read_excel(path, header=6, dtype=str, sheet_name="Template")
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
+            data = self._normalize_source_template(data, metadata.get(path))
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._restore_percentage_cells(data, path)
             self._check_required_columns(data, required_wh_discount)
@@ -1036,7 +1084,7 @@ class Template_ETL:
         self,
         sheet_names: dict[Path, str] | None = None,
     ) -> "Template_ETL":
-        self._load_source_metadata(sheet_names)
+        metadata = self._load_source_metadata(sheet_names)
         sources = []
         required = [
             "GOLD PROMO TYPE",
@@ -1054,6 +1102,11 @@ class Template_ETL:
                 sheet_name=(sheet_names or {}).get(path, "Template"),
             )
             data = data.drop(columns=["NOTE ERR FROM MASTER DATA"], errors="ignore")
+            data = self._normalize_source_template(
+                data,
+                metadata.get(path),
+                require_sp_period=True,
+            )
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_stage2)
             data = self._filter_gold_promo_rows(data)
