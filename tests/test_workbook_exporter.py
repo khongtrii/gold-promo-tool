@@ -16,11 +16,11 @@ class WorkbookExporterTest(unittest.TestCase):
         timestamp = "1609_1200"
 
         expected = {
-            "template_ag": "8_TEMPLATE_AG_1609_1200.xls",
-            "template_ag_raw": "8_TEMPLATE_AG_RAW_1609_1200.xls",
+            "template_ag": "8_AG_1609_1200.xls",
+            "template_ag_raw": "8_AG_RAW_1609_1200.xls",
             "report_ag_errors": "8_REPORT_AG_ERRORS_1609_1200.xls",
-            "template_dc": "9_TEMPLATE_DC_1609_1200.xls",
-            "template_de": "10_TEMPLATE_DE_1609_1200.xls",
+            "template_dc": "9_DC_1609_1200.xls",
+            "template_de": "10_DE_1609_1200.xls",
         }
         for name, file_name in expected.items():
             with self.subTest(name=name):
@@ -28,6 +28,23 @@ class WorkbookExporterTest(unittest.TestCase):
                     GoldPromoApp._output_file(output, name, timestamp),
                     output / file_name,
                 )
+
+    def test_output_file_removes_only_leading_template_prefix(self):
+        output = Path("output")
+        timestamp = "1609_1200"
+
+        self.assertEqual(
+            GoldPromoApp._output_file(
+                output, "template_add_attribute_marketing_check", timestamp
+            ),
+            output / "ADD_ATTRIBUTE_MARKETING_CHECK_1609_1200.xls",
+        )
+        self.assertEqual(
+            GoldPromoApp._output_file(
+                output, "source_template_attr_file_check", timestamp
+            ),
+            output / "SOURCE_TEMPLATE_ATTR_FILE_CHECK_1609_1200.xls",
+        )
 
     def test_source_error_notes_use_yellow_fill_and_red_font(self):
         with TemporaryDirectory(dir=Path.cwd()) as directory:

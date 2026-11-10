@@ -102,6 +102,33 @@ class AttributeMediumMappingTest(unittest.TestCase):
             ["GC1"],
         )
 
+    def test_add_attribute_check_counts_gold_code_and_lv_rows(self):
+        etl = SimpleNamespace(
+            src=pd.DataFrame(
+                {
+                    "SO": ["SO1", "SO2", "SO3"],
+                    "GOLD CODE": ["GC1", "GC1", "GC1"],
+                    "LV": ["1", "1", "2"],
+                    "LU": ["1", "2", "1"],
+                    "ATTRIBUTE MARKETING": ["Hero", "Cata", "Hero"],
+                    "FREE PRODUCT": ["", "", ""],
+                }
+            ),
+            dict_network={},
+            plan=pd.DataFrame(),
+            cata="C01",
+            cata_description="",
+            cata_period="",
+        )
+
+        mapping = Template_Mapping(etl)._create_add_attribute_marketing()
+
+        self.assertNotIn("COUNT", mapping.template_add_attribute_marketing.columns)
+        self.assertEqual(
+            mapping.template_add_attribute_marketing_check["COUNT"].tolist(),
+            [2, 2, 1],
+        )
+
 
 class PromotionPlanMappingTest(unittest.TestCase):
     def test_description_contains_only_catalogue_description(self):
@@ -346,12 +373,12 @@ class DiscountSupplementNetworkTest(unittest.TestCase):
         }
         self.assert_sites(["101", "201", "839"], ["101", "201", "839"])
 
-    def test_site_158_is_added_only_when_final_network_contains_155(self):
+    def test_site_158_is_not_implicitly_added_for_site_155(self):
         self.etl.src["DISCOUNT_NETWORK_EXPANDED"] = "101"
         self.etl.dict_network["DISCOUNT_NETWORK"] = {
             "8710": "155", "8300": "",
         }
-        self.assert_sites(["101", "155", "158"], ["101", "155", "158"])
+        self.assert_sites(["101", "155"], ["101", "155"])
 
         self.etl.dict_network["DISCOUNT_NETWORK"] = {
             "8710": "157", "8300": "",

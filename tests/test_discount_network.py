@@ -123,6 +123,39 @@ class DiscountNetworkTest(unittest.TestCase):
         self.assertEqual(etl.src.at[0, "GOLD PROMO TYPE"], "GOLD PROMO")
         self.assertEqual(etl.src.at[0, "DISCOUNT_NETWORK_EXPANDED"], "801")
 
+    def test_stage3_rejects_plain_discount_between_zero_and_one(self):
+        values = ["0", "0.5", "0.99", "1", "10%", "1T+1T"]
+        data = pd.DataFrame(
+            {column: ["1"] * len(values) for column in required_wh_discount}
+        )
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        data["GOLD CODE"] = [str(index) for index in range(len(values))]
+        data["PURCHASE NETWORK"] = "801"
+        data["DISCOUNT (% OR VALUE)"] = values
+        data["COMMERCIAL CONTRACT"] = "R0380"
+        data["PP START YEAR"] = "2099"
+        data["PP END YEAR"] = "2099"
+        data["PP END DAY"] = "2"
+        path = Path("source.xlsx")
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+        etl.dict_network = {
+            "DISCOUNT_NETWORK": {"8300": "801"},
+            "wh": ["801"],
+            "wh8": ["801"],
+        }
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: pd.DataFrame()}
+        ), patch("src.service.template_service.pd.read_excel", return_value=data):
+            etl._load_src_wh_discount()
+
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+        self.assertEqual(notes[0], "")
+        self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[1])
+        self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[2])
+        self.assertEqual(notes[3:], [""] * 3)
+
     def _load_wh_networks(
         self, expressions, wh_sites="801;802;809", contracts=None
     ):

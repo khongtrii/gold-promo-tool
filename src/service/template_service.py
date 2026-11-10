@@ -96,6 +96,9 @@ class Template_ETL:
     ATTRIBUTE_CLASS_ERROR = "POSITION không thể chuyển đổi thành CLASS"
     NORMAL_PURCHASE_PRICE_ERROR = "NORMAL PURCHASE PRICE không thể chuyển đổi thành số"
     DISCOUNT_VALUE_ERROR = "DISCOUNT (% OR VALUE) không thể chuyển đổi thành số"
+    DISCOUNT_PLAIN_VALUE_MIN_ERROR = (
+        "DISCOUNT (% OR VALUE) dạng tiền phải bằng 0 hoặc lớn hơn hoặc bằng 1."
+    )
     DISCOUNT_PERCENTAGE_LIMIT_ERROR = "DISCOUNT (% OR VALUE) không được vượt quá 100%."
     EXCEPTION_CARTON_DISCOUNT_ERROR = (
         "GOLD CODE ngoại lệ không được cài chiết khấu thùng (T/TH)."
@@ -847,6 +850,16 @@ class Template_ETL:
                 self.DISCOUNT_PERCENTAGE_LIMIT_ERROR,
             )
             valid_plain_discount = plain_discount & ~invalid_discount
+            invalid_plain_value = (
+                valid_plain_discount
+                & numeric_discount.gt(0)
+                & numeric_discount.lt(1)
+            )
+            self._append_note_err(
+                data,
+                data.index[invalid_plain_value],
+                self.DISCOUNT_PLAIN_VALUE_MIN_ERROR,
+            )
             data["DISCOUNT (% OR VALUE)"] = data[
                 "DISCOUNT (% OR VALUE)"
             ].astype(object)
@@ -973,6 +986,16 @@ class Template_ETL:
                 self.DISCOUNT_PERCENTAGE_LIMIT_ERROR,
             )
             valid_plain_discount = plain_discount & ~invalid_discount
+            invalid_plain_value = (
+                valid_plain_discount
+                & numeric_discount.gt(0)
+                & numeric_discount.lt(1)
+            )
+            self._append_note_err(
+                data,
+                data.index[invalid_plain_value],
+                self.DISCOUNT_PLAIN_VALUE_MIN_ERROR,
+            )
             data["DISCOUNT (% OR VALUE)"] = data["DISCOUNT (% OR VALUE)"].astype(object)
             data.loc[~plain_discount, "DISCOUNT (% OR VALUE)"] = discount_text.loc[
                 ~plain_discount

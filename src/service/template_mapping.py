@@ -50,14 +50,6 @@ class StageMixin:
     """Các bước xử lý DataFrame dùng chung cho mọi template."""
 
     @staticmethod
-    def add_companion_site(sites):
-        """Add site 158 whenever the final network contains site 155."""
-        sites = list(sites)
-        if "155" in sites and "158" not in sites:
-            sites.append("158")
-        return sites
-
-    @staticmethod
     def reset_no(data):
         data = data.reset_index(drop=True)
         data.insert(0, "NO", range(1, len(data) + 1))
@@ -237,6 +229,7 @@ class BaseTemplate(ContractMixin, StageMixin):
         self.template_po_commitment_report: Optional[pd.DataFrame] = None
         self.template_supplier_schedule: Optional[pd.DataFrame] = None
         self.template_add_attribute_marketing: Optional[pd.DataFrame] = None
+        self.template_add_attribute_marketing_check: Optional[pd.DataFrame] = None
         self.gold_code_delete: Optional[pd.DataFrame] = None
         
 class CheckOAMixin:
@@ -479,7 +472,6 @@ class PurchaseMixin:
             .astype(str)
             .str.split(";")
             .map(lambda sites: sites + store_minigo + wh)
-            .map(self.add_companion_site)
         )
 
         template_purchase = template_purchase.explode("SITE")
@@ -644,7 +636,15 @@ class AddAttributeMarketingMixin(AttributeMapMixin):
             template_add_attribute_marketing, have_no=True
         )
 
+        template_add_attribute_marketing_check = template_add_attribute_marketing.copy()
+        template_add_attribute_marketing_check["COUNT"] = (
+            template_add_attribute_marketing_check
+            .groupby(["GOLD CODE", "LV"], dropna=False)["GOLD CODE"]
+            .transform("size")
+        )
+
         self.template_add_attribute_marketing = template_add_attribute_marketing
+        self.template_add_attribute_marketing_check = template_add_attribute_marketing_check
 
         return self
 
@@ -858,7 +858,6 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             site_lists.loc[~mask_ok] = site_lists.loc[~mask_ok].map(
                 lambda sites: sites + store_minigo
             )
-        site_lists = site_lists.map(self.add_companion_site)
         template_ag_raw[column_ag[2]] = site_lists
 
         template_ag_raw = template_ag_raw.explode(column_ag[2])

@@ -331,6 +331,30 @@ class DiscountParsingTest(unittest.TestCase):
                 normalized = Template_ETL._normalize_discount_text(value)
                 self.assertIsNone(Template_ETL.VALID_DISCOUNT.fullmatch(normalized))
 
+    def test_stage1_rejects_plain_discount_between_zero_and_one(self):
+        values = ["0", "0.5", "0.99", "1", "10", "50%", "1+1"]
+        data = pd.DataFrame(
+            {column: ["1"] * len(values) for column in required_cm}
+        )
+        data["GOLD PROMO TYPE"] = "GOLD PROMO"
+        data["PURCHASE VAT"] = "10%"
+        data["NORMAL PURCHASE PRICE"] = "100"
+        data["DISCOUNT (% OR VALUE)"] = values
+        path = Path("source.xlsx")
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: pd.DataFrame()}
+        ), patch("src.service.template_service.pd.read_excel", return_value=data):
+            etl._load_src()
+
+        notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
+        self.assertEqual(notes[0], "")
+        self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[1])
+        self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[2])
+        self.assertEqual(notes[3:], [""] * 4)
+
     def test_rejects_percentage_free_goods_and_partial_unit_formats(self):
         invalid_values = [
             "10%+2%",

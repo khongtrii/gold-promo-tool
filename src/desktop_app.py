@@ -1220,7 +1220,8 @@ class GoldPromoApp:
     def _output_file(output: Path, name: str, timestamp: str, suffix: str = ".xls") -> Path:
         order = TEMPLATE_OUTPUT_ORDER.get(name)
         prefix = f"{order}_" if order is not None else ""
-        return output / f"{prefix}{name.upper()}_{timestamp}{suffix}"
+        output_name = re.sub(r"(?i)^template_", "", name)
+        return output / f"{prefix}{output_name.upper()}_{timestamp}{suffix}"
 
     @staticmethod
     def _group_output_dir(output: Path, structure, file_name) -> Path:
@@ -1869,6 +1870,16 @@ class GoldPromoApp:
                         self._output_file(group_output, attribute, timestamp),
                         finalize_with_excel=True,
                     )
+                    if method_name == "add_attribute_marketing":
+                        WorkbookExporter.write_template(
+                            result.template_add_attribute_marketing_check,
+                            self._output_file(
+                                group_output,
+                                "template_add_attribute_marketing_check",
+                                timestamp,
+                            ),
+                            finalize_with_excel=True,
+                        )
                     if (
                         method_name == "add_attribute_marketing"
                         and result.gold_code_delete is not None
