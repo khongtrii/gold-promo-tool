@@ -709,6 +709,39 @@ class DiscountParsingTest(unittest.TestCase):
             ["2", "10", "2099", "10", "10", "2099"],
         )
 
+    def test_stage2_keeps_all_rows_regardless_of_gold_promo_type(self):
+        path = Path("source.xlsx")
+        promo_types = ["GOLD PROMO", "OUT OF GOLD PROMO", "INVALID", ""]
+        data = pd.DataFrame(
+            {column: ["1"] * len(promo_types) for column in required_stage2}
+        )
+        data["GOLD PROMO TYPE"] = promo_types
+        data["SALE VAT"] = "10%"
+        data["PROMOTION SALE PRICE"] = "100"
+        data["PRICELIST"] = "20100001"
+        data["SP START DAY"] = "2"
+        data["SP START MONTH"] = "10"
+        data["SP START YEAR"] = "2099"
+        data["SP END DAY"] = "10"
+        data["SP END MONTH"] = "10"
+        data["SP END YEAR"] = "2099"
+        etl = Template_ETL([path])
+        etl.dept = {path.name: "110"}
+
+        with patch.object(
+            etl, "_load_source_metadata", return_value={path: pd.DataFrame()}
+        ), patch("src.service.template_service.pd.read_excel", return_value=data):
+            etl._load_src_listoff()
+
+        self.assertEqual(etl.src_listoff["GOLD PROMO TYPE"].tolist(), promo_types)
+        self.assertEqual(len(etl.src_listoff), len(promo_types))
+        self.assertFalse(etl.has_invalid_gold_promo_type)
+        self.assertFalse(
+            etl.src_listoff["NOTE ERR FROM MASTER DATA"]
+            .str.contains(etl.GOLD_PROMO_TYPE_ERROR, regex=False)
+            .any()
+        )
+
     def test_stage1_accepts_mixed_legacy_and_current_sources(self):
         old_path = Path("old.xlsx")
         new_path = Path("new.xlsx")

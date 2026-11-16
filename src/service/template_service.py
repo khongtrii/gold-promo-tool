@@ -1110,7 +1110,6 @@ class Template_ETL:
         metadata = self._load_source_metadata(sheet_names)
         sources = []
         required = [
-            "GOLD PROMO TYPE",
             "GOLD CODE",
             "SV",
             "PRICELIST",
@@ -1132,16 +1131,6 @@ class Template_ETL:
             )
             data["NOTE ERR FROM MASTER DATA"] = ""
             self._check_required_columns(data, required_stage2)
-            data = self._filter_gold_promo_rows(data)
-            file_has_invalid_type = data["NOTE ERR FROM MASTER DATA"].astype(str).str.contains(
-                self.GOLD_PROMO_TYPE_ERROR, regex=False
-            ).any()
-            if file_has_invalid_type:
-                data["FILE NAME"] = path.name
-                data["_SOURCE_ROW"] = data.index + 8
-                data["STRUCTURE"] = self.dept[path.name]
-                sources.append(data)
-                continue
             self._check_required_data(data, required)
             self._validate_stage2_sale_values(data)
     
