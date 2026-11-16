@@ -154,7 +154,8 @@ class DiscountNetworkTest(unittest.TestCase):
         self.assertEqual(notes[0], "")
         self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[1])
         self.assertIn(etl.DISCOUNT_PLAIN_VALUE_MIN_ERROR, notes[2])
-        self.assertEqual(notes[3:], [""] * 3)
+        self.assertEqual(notes[3:5], [""] * 2)
+        self.assertIn(etl.STAGE3_DISCOUNT_VALUE_ERROR, notes[5])
 
     def _load_wh_networks(
         self, expressions, wh_sites="801;802;809", contracts=None
@@ -265,7 +266,7 @@ class DiscountNetworkTest(unittest.TestCase):
         result = self.etl._check_network(data)
         self.assertEqual(result.at[0, "DISCOUNT_NETWORK_EXPANDED"], "802;809")
 
-    def test_stage3_rejects_plain_number_plus_number_discount(self):
+    def test_stage3_rejects_all_discounts_containing_plus(self):
         values = ["10+5", "10T+5TH", "10", "10%"]
         data = pd.DataFrame({column: ["1"] * len(values) for column in required_wh_discount})
         data["GOLD PROMO TYPE"] = "GOLD PROMO"
@@ -282,8 +283,9 @@ class DiscountNetworkTest(unittest.TestCase):
             etl.dict_network = {"DISCOUNT_NETWORK": {"8300": "101"}}
             etl._load_src_wh_discount()
         notes = etl.src["NOTE ERR FROM MASTER DATA"].fillna("").tolist()
-        self.assertIn("số+số", notes[0])
-        self.assertEqual(notes[1:], ["", "", ""])
+        self.assertIn(etl.STAGE3_DISCOUNT_VALUE_ERROR, notes[0])
+        self.assertIn(etl.STAGE3_DISCOUNT_VALUE_ERROR, notes[1])
+        self.assertEqual(notes[2:], ["", ""])
 
 
 if __name__ == "__main__":

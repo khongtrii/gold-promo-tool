@@ -50,6 +50,12 @@ class Template_ETL:
         rf"{DISCOUNT_NUMBER}\+{DISCOUNT_NUMBER})$",
         re.IGNORECASE,
     )
+    STAGE3_VALID_DISCOUNT = re.compile(
+        rf"^(?:{DISCOUNT_NUMBER}|{DISCOUNT_NUMBER}%)$"
+    )
+    STAGE3_DISCOUNT_VALUE_ERROR = (
+        "Stage 3 chỉ cho phép DISCOUNT dạng số hoặc số%; không cho phép dấu +."
+    )
     NON_WAREHOUSE_DISCOUNT = re.compile(
         rf"^{DISCOUNT_NUMBER}\+{DISCOUNT_NUMBER}$"
     )
@@ -967,17 +973,13 @@ class Template_ETL:
                 discount_text.where(plain_discount).map(self._normalize_decimal_number),
                 errors="coerce",
             )
-            invalid_discount = ~discount_text.str.fullmatch(self.VALID_DISCOUNT, na=False)
-            self._append_note_err(
-                data, data.index[invalid_discount], self.DISCOUNT_VALUE_ERROR
-            )
-            non_warehouse_discount = discount_text.str.fullmatch(
-                self.NON_WAREHOUSE_DISCOUNT, na=False
+            invalid_discount = ~discount_text.str.fullmatch(
+                self.STAGE3_VALID_DISCOUNT, na=False
             )
             self._append_note_err(
                 data,
-                data.index[non_warehouse_discount],
-                "Stage 3 không cho phép DISCOUNT dạng số+số; chỉ chấp nhận số, số% hoặc sốT/TH+sốT/TH.",
+                data.index[invalid_discount],
+                self.STAGE3_DISCOUNT_VALUE_ERROR,
             )
             percentage_over_limit = discount_text.map(self._percentage_discount_exceeds_limit)
             self._append_note_err(

@@ -546,6 +546,29 @@ class DiscountRawRestoreTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "AG raw file is missing required columns"):
                 Discount.from_ag_raw_file("template_ag_raw.xls")
 
+    def test_stage3_rejects_plus_discount_from_exported_ag_raw(self):
+        raw = pd.DataFrame(
+            {column: ["value"] for column in Discount.RAW_COLUMNS}
+        )
+        raw["DISCOUNT VALUE"] = "10T+5TH"
+
+        with patch("src.service.template_mapping.pd.read_excel", return_value=raw):
+            discount = Discount.from_ag_raw_file("template_ag_raw.xls")
+
+        with self.assertRaisesRegex(ValueError, "không cho phép dấu \\+"):
+            discount.validate_stage3_discount_values()
+
+    def test_stage1_allows_plus_discount_from_exported_ag_raw(self):
+        raw = pd.DataFrame(
+            {column: ["value"] for column in Discount.RAW_COLUMNS}
+        )
+        raw["DISCOUNT VALUE"] = "10T+5TH"
+
+        with patch("src.service.template_mapping.pd.read_excel", return_value=raw):
+            discount = Discount.from_ag_raw_file("template_ag_raw.xls")
+
+        self.assertEqual(discount.template_ag_raw.at[0, "DISCOUNT VALUE"], "10T+5TH")
+
 
 if __name__ == "__main__":
     unittest.main()
