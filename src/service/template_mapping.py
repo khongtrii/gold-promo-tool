@@ -761,22 +761,6 @@ class Discount(ContractMixin, StageMixin, DiscountTypeMixin):
             raise ValueError("Create template_ag before importing the AG report or creating discount templates.")
         return self.template_ag_raw
 
-    def validate_stage3_discount_values(self) -> "Discount":
-        """Reject combined discounts when finishing the Stage 3 workflow."""
-        data = self._require_ag_raw()
-        contains_plus = (
-            data["DISCOUNT VALUE"]
-            .fillna("")
-            .astype(str)
-            .str.contains("+", regex=False)
-        )
-        if contains_plus.any():
-            rows = ", ".join(str(index + 2) for index in data.index[contains_plus])
-            raise ValueError(
-                f"{Template_ETL.STAGE3_DISCOUNT_VALUE_ERROR} Dòng AG raw: {rows}."
-            )
-        return self
-
     @staticmethod
     def _normalize_ag_number(value) -> str:
         if pd.isna(value):

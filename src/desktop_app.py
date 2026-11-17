@@ -2005,7 +2005,6 @@ class GoldPromoApp:
             self.stage3_report_ag,
             self.stage3_output,
             self.stage3_status,
-            validate_stage3_discount=True,
         )
 
     def _finish_discount_templates(
@@ -2015,8 +2014,6 @@ class GoldPromoApp:
         report_variable: StringVar,
         output_variable: StringVar,
         status_label: ttk.Label,
-        *,
-        validate_stage3_discount: bool = False,
     ) -> None:
         raw_paths = [
             Path(value.strip()).expanduser()
@@ -2045,13 +2042,6 @@ class GoldPromoApp:
                 "Create an AG template in this session or select exported AG raw template file(s).",
             )
             return
-        if validate_stage3_discount:
-            try:
-                for _, pending_discount in pending_discounts:
-                    pending_discount.validate_stage3_discount_values()
-            except ValueError as error:
-                messagebox.showerror("Invalid AG raw template", str(error))
-                return
         paths = [
             Path(value.strip()).expanduser()
             for value in report_variable.get().split(";")
