@@ -269,6 +269,23 @@ class SiteGroupHistoryTest(unittest.TestCase):
         messages.showinfo.assert_called_once()
         self.assertEqual(len(self.read_rows()), 3)
 
+    def test_create_other_templates_does_not_record_sitegroups(self):
+        app = Mock()
+        etl = Mock()
+        etl.src = pd.DataFrame({"ROW": ["value"]})
+        etl.path_src = ()
+        app.pending_etl = etl
+        app._output_dir.return_value = Path("output")
+        app._missing_template_prerequisites.return_value = []
+        app._return_errors.return_value = False
+        app._request_template_exports.return_value = set()
+        app._stage1_groups.return_value = []
+
+        with patch("src.desktop_app.messagebox"):
+            GoldPromoApp.create_template_mapping(app)
+
+        app._record_used_sitegroups.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

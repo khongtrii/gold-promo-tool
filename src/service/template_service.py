@@ -1247,7 +1247,7 @@ class Template_ETL:
             raise ValueError(f"CATALOGUE {self.cata} có ngày không hợp lệ trong Master data.")
 
         plan["SHOP ACTIVATION"] = plan["SHOP ACTIVE START"]
-        plan["GLOBAL PERIOD START"] = plan["CATALOGUE START DATE"] - pd.Timedelta(days=24)
+        plan["GLOBAL PERIOD START"] = plan["SHOP ACTIVATION"] - pd.Timedelta(days=1)
         plan["GLOBAL PERIOD END"] = plan["CATALOGUE END DATE"]
 
         plan["COMMITMENT CLOSING"] = plan["GENERAL PO DATE (D-17)"]

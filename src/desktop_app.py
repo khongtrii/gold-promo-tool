@@ -1920,7 +1920,6 @@ class GoldPromoApp:
                         finalize_with_excel=True,
                     )
                     pending_discounts.append((group_output, discount))
-            self._record_used_sitegroups(etl)
             self.pending_discounts = pending_discounts
             if create_template_ag:
                 self.report_button.state(["!disabled"])

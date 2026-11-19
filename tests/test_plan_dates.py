@@ -36,6 +36,10 @@ class PlanDateTest(unittest.TestCase):
         shop_activation = etl.plan["SHOP ACTIVATION"].iat[0]
         self.assertIsInstance(shop_activation, pd.Timestamp)
         self.assertEqual(shop_activation, shop_active_start)
+        self.assertEqual(
+            etl.plan["GLOBAL PERIOD START"].iat[0],
+            shop_activation - pd.Timedelta(days=1),
+        )
 
 if __name__ == "__main__":
     unittest.main()
