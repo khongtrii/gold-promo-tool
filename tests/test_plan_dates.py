@@ -13,6 +13,7 @@ class PlanDateTest(unittest.TestCase):
             column: ["02/10/2026"]
             for column in date_columns_plan
         }
+        source["SHOP ACTIVE START"] = ["05/10/2026"]
         source.update(
             {
                 "CATALOGUE": ["C01"],
@@ -31,7 +32,10 @@ class PlanDateTest(unittest.TestCase):
         catalogue_date = etl.plan["CATALOGUE START DATE"].iat[0]
         self.assertIsInstance(catalogue_date, pd.Timestamp)
         self.assertEqual((catalogue_date.day, catalogue_date.month), (2, 10))
-        self.assertIsInstance(etl.plan["SHOP ACTIVATION"].iat[0], pd.Timestamp)
+        shop_active_start = etl.plan["SHOP ACTIVE START"].iat[0]
+        shop_activation = etl.plan["SHOP ACTIVATION"].iat[0]
+        self.assertIsInstance(shop_activation, pd.Timestamp)
+        self.assertEqual(shop_activation, shop_active_start)
 
 if __name__ == "__main__":
     unittest.main()

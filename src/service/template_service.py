@@ -1246,9 +1246,7 @@ class Template_ETL:
         if plan[date_columns_plan].isna().any(axis=1).any():
             raise ValueError(f"CATALOGUE {self.cata} có ngày không hợp lệ trong Master data.")
 
-        plan["SHOP ACTIVATION"] = (
-            plan["CATALOGUE START DATE"] - pd.Timedelta(days=23)
-        )
+        plan["SHOP ACTIVATION"] = plan["SHOP ACTIVE START"]
         plan["GLOBAL PERIOD START"] = plan["CATALOGUE START DATE"] - pd.Timedelta(days=24)
         plan["GLOBAL PERIOD END"] = plan["CATALOGUE END DATE"]
 
