@@ -247,6 +247,23 @@ class SiteGroupHistoryTest(unittest.TestCase):
         self.assertFalse(app.pending_etl.should_generate_so_sitegroup)
         self.assertEqual(len(self.read_rows()), 3)
 
+    def test_record_used_sitegroups_uses_one_bulk_update(self):
+        app = Mock()
+        etl = self.make_etl()
+        state_path = self.path.with_suffix(".json")
+        app._sitegroup_state_path.return_value = state_path
+
+        with patch(
+            "src.desktop_app.add_excluded_sitegroups",
+            return_value=["00123", "60000"],
+        ) as add_many:
+            GoldPromoApp._record_used_sitegroups(app, etl)
+
+        add_many.assert_called_once_with(["00123", "60000"], state_path)
+        app._sync_excluded_sitegroup_ui.assert_called_once_with(
+            ["00123", "60000"]
+        )
+
     def test_ui_only_completes_after_history_and_json_succeed(self):
         app = Mock()
         etl = self.make_etl()

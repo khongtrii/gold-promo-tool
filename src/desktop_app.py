@@ -27,7 +27,7 @@ from src.service.template_service import Template_ETL
 from src.data_file_paths import default_master_data_path
 from src.sitegroup_state import (
     add_exception_discount_gold_code,
-    add_excluded_sitegroup,
+    add_excluded_sitegroups,
     get_exception_discount_gold_codes,
     get_excluded_sitegroups,
     get_sitegroup_state_path,
@@ -911,9 +911,7 @@ class GoldPromoApp:
             messagebox.showerror("Catalogue required", "Run Validate Pipeline to identify the catalogue first.", parent=self.root)
             return
         try:
-            latest_codes = get_excluded_sitegroups(state_path)
-            for code in codes:
-                latest_codes = add_excluded_sitegroup(code, state_path)
+            latest_codes = add_excluded_sitegroups(codes, state_path)
             self._sync_excluded_sitegroup_ui(latest_codes)
             self.non_suggested_sitegroup_input.set("")
         except Exception as error:
@@ -1096,9 +1094,7 @@ class GoldPromoApp:
                 if str(code).strip()
             }
         )
-        latest_codes = get_excluded_sitegroups(state_path)
-        for code in used_codes:
-            latest_codes = add_excluded_sitegroup(code, state_path)
+        latest_codes = add_excluded_sitegroups(used_codes, state_path)
         self._sync_excluded_sitegroup_ui(latest_codes)
 
     def _choose_workbook_sheet(self, path: Path, file_label: str) -> str | None:

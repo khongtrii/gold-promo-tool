@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Iterable
 from copy import deepcopy
 from pathlib import Path
 from typing import Callable
@@ -38,6 +39,11 @@ DEFAULT_SITEGROUP_STATE = {
     "EXCEPTION_DISCOUNT_GC": list(DEFAULT_EXCEPTION_DISCOUNT_GOLD_CODES),
     "ACTIVE": "no",
 }
+
+REPLACE_RETRY_TIMEOUT = 5.0
+REPLACE_RETRY_INITIAL_DELAY = 0.05
+REPLACE_RETRY_MAX_DELAY = 0.5
+TRANSIENT_REPLACE_WINERRORS = {5, 32, 33}
 
 
 def get_sitegroup_state_path(
@@ -104,6 +110,35 @@ def _normalize_state(state) -> tuple[dict, bool]:
     return normalized, changed
 
 
+def _is_transient_replace_error(error: OSError) -> bool:
+    return (
+        isinstance(error, PermissionError)
+        or getattr(error, "winerror", None) in TRANSIENT_REPLACE_WINERRORS
+    )
+
+
+def _replace_with_retry(
+    source: Path,
+    destination: Path,
+    timeout: float = REPLACE_RETRY_TIMEOUT,
+) -> None:
+    """Replace a file, tolerating short-lived Windows/SMB file locks."""
+    deadline = time.monotonic() + timeout
+    delay = REPLACE_RETRY_INITIAL_DELAY
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as error:
+            if not _is_transient_replace_error(error):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, REPLACE_RETRY_MAX_DELAY)
+
+
 def _atomic_write(state: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
@@ -121,7 +156,7 @@ def _atomic_write(state: dict, path: Path) -> None:
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
             temporary_path = Path(temporary_file.name)
-        os.replace(temporary_path, path)
+        _replace_with_retry(temporary_path, path)
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
@@ -228,6 +263,31 @@ def add_excluded_sitegroup(code: str, path: Path | None = None) -> list[str]:
         else None,
         path,
     )
+    return list(state["EXC_SITE_GROUP"])
+
+
+def add_excluded_sitegroups(
+    codes: Iterable[object],
+    path: Path | None = None,
+) -> list[str]:
+    """Add multiple reserved Site Group codes in one locked JSON update."""
+    normalized_codes = []
+    seen = set()
+    for value in codes:
+        code = str(value).strip()
+        if code and code not in seen:
+            normalized_codes.append(code)
+            seen.add(code)
+    if not normalized_codes:
+        return get_excluded_sitegroups(path)
+
+    def add_all(current: dict) -> None:
+        existing = set(current["EXC_SITE_GROUP"])
+        current["EXC_SITE_GROUP"].extend(
+            code for code in normalized_codes if code not in existing
+        )
+
+    state = _update_state(add_all, path)
     return list(state["EXC_SITE_GROUP"])
 
 
