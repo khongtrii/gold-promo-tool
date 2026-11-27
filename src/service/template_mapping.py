@@ -1130,6 +1130,12 @@ class SalePrice(StageMixin):
 
     def _create_sp(self) -> "SalePrice":
         data = self.src.copy()
+        today = pd.Timestamp.today().normalize()
+        tomorrow = today + pd.Timedelta(days=1)
+        start_dates = data["SP START DATE"].mask(
+            data["SP START DATE"].dt.normalize().le(today),
+            tomorrow,
+        )
         template_sp = {
             column_sale[0] : "0",
             column_sale[1] : data["GOLD CODE"],
@@ -1137,7 +1143,7 @@ class SalePrice(StageMixin):
             column_sale[3] : data["PROMOTION SALE PRICE"],
             column_sale[4] : data["PRICELIST"],
             "PRICELIST CODE" : data["PRICELIST CODE"],
-            column_sale[5] : data["SP START DATE"].dt.strftime("%d/%m/%Y"),
+            column_sale[5] : start_dates.dt.strftime("%d/%m/%Y"),
             column_sale[6] : data["SP END DATE"].dt.strftime("%d/%m/%Y"),
             column_sale[7] : data["SALE VAT"].map(VAT),
             column_sale[8] : ""

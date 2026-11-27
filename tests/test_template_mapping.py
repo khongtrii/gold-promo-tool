@@ -15,6 +15,35 @@ from src.service.template_service import Template_ETL
 
 
 class SalePriceAttributeTest(unittest.TestCase):
+    def test_sale_price_moves_non_future_start_dates_to_tomorrow(self):
+        today = pd.Timestamp.today().normalize()
+        tomorrow = today + pd.Timedelta(days=1)
+        future = today + pd.Timedelta(days=5)
+        etl = SimpleNamespace(
+            src_listoff=pd.DataFrame({
+                "GOLD CODE": ["GC1", "GC2", "GC3"],
+                "SV": ["1", "1", "1"],
+                "PROMOTION SALE PRICE": [100, 200, 300],
+                "PRICELIST": ["101", "101", "101"],
+                "PRICELIST CODE": ["P", "P", "P"],
+                "SP START DATE": [today - pd.Timedelta(days=1), today, future],
+                "SP END DATE": [future, future, future],
+                "SALE VAT": ["10%", "10%", "10%"],
+            }),
+            src_attr=None,
+        )
+
+        result = SalePrice(etl)._create_sp().template_sp
+
+        self.assertEqual(
+            result["START DATE"].tolist(),
+            [
+                tomorrow.strftime("%d/%m/%Y"),
+                tomorrow.strftime("%d/%m/%Y"),
+                future.strftime("%d/%m/%Y"),
+            ],
+        )
+
     def test_note_count_is_added_after_attribute_columns_are_selected(self):
         etl = SimpleNamespace(
             src_listoff=None,

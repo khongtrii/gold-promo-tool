@@ -7,9 +7,6 @@ from __future__ import annotations
 
 import traceback
 import re
-import os
-import subprocess
-import sys
 from copy import copy
 from datetime import date, datetime
 from pathlib import Path
@@ -2322,40 +2319,9 @@ class GoldPromoApp:
             self.stage2_status.config(text="Stage 2 did not create an output. Review the error messages.")
 
 
-def launch_updater() -> None:
-    """Start the separate updater process once for every app launch."""
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    if getattr(sys, "frozen", False):
-        app_path = Path(sys.executable).resolve()
-        updater_path = app_path.with_name("gold-promo-updater.exe")
-        if not updater_path.is_file():
-            messagebox.showwarning("Updater không tồn tại", f"Không tìm thấy file updater:\n{updater_path}")
-            return
-        command = [str(updater_path)]
-    else:
-        app_path = Path(sys.argv[0]).resolve()
-        command = [sys.executable, "-m", "src.updater", "--check-only"]
-
-    command.extend(
-        [
-            "--app-path",
-            str(app_path),
-            "--app-pid",
-            str(os.getpid()),
-            "--current-version",
-            __version__,
-        ]
-    )
-    try:
-        subprocess.Popen(command, cwd=str(app_path.parent), creationflags=creationflags)
-    except OSError as error:
-        messagebox.showerror("Không thể mở updater", str(error))
-
-
 def main() -> None:
     root = Tk()
     GoldPromoApp(root)
-    root.after(500, launch_updater)
     root.mainloop()
 
 

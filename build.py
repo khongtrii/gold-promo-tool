@@ -40,12 +40,13 @@ def build() -> None:
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR)
 
-    for exe in (
+    for artifact in (
         APP_DIR / "gold-promo-tool.exe",
         APP_DIR / "gold-promo-updater.exe",
+        APP_DIR / "gold-promo-updater.spec",
     ):
-        if exe.exists():
-            exe.unlink()
+        if artifact.exists():
+            artifact.unlink()
 
     common = [
         "--onefile",
@@ -61,23 +62,19 @@ def build() -> None:
         "--clean",
     ]
 
-    for entrypoint, name in (
-        ("src/desktop_app.py", "gold-promo-tool"),
-        ("src/updater.py", "gold-promo-updater"),
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "PyInstaller",
-                entrypoint,
-                "--name",
-                name,
-                *common,
-            ],
-            cwd=ROOT,
-            check=True,
-        )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "src/desktop_app.py",
+            "--name",
+            "gold-promo-tool",
+            *common,
+        ],
+        cwd=ROOT,
+        check=True,
+    )
 
 
 if __name__ == "__main__":
